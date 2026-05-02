@@ -29,6 +29,10 @@ class Listbox(Widget):
 		self._active   = 0		# active (cursor) index
 		self._scrollY  = 0		# first visible item index
 		self._anchor   = 0		# anchor for extended selection
+		# Scrollbar drag state
+		self._sbDrag            = False
+		self._sbDragAnchorRow   = 0	# scrollbar row where drag started
+		self._sbDragAnchorScroll= 0	# _scrollY at drag start
 
 	# ------------------------------------------------------------------
 	# Public API
@@ -326,8 +330,60 @@ class Listbox(Widget):
 			self._scrollY = idx - visH + 1
 
 	def _handleMouse(self, mx, my, bstate):
-		bd   = int(self._opts.get('borderwidth') or 0)
-		i    = self._scrollY + (my - self._y - bd)
+		bd    = int(self._opts.get('borderwidth') or 0)
+		visH  = max(1, self._h - 2*bd)
+		by    = self._y + bd
+		total = len(self._items)
+		barX  = self._x + self._w - bd
+
+		# Scroll wheel anywhere on the widget
+		if bstate & curses.BUTTON4_PRESSED:
+			self._scrollY = max(0, self._scrollY - 3)
+			self._markDirty()
+			return True
+		if bstate & curses.BUTTON5_PRESSED:
+			self._scrollY = min(max(0, total - visH), self._scrollY + 3)
+			self._markDirty()
+			return True
+
+		release = bool(bstate & (curses.BUTTON1_RELEASED | curses.BUTTON1_CLICKED))
+		press   = bool(bstate & curses.BUTTON1_PRESSED)
+
+		# Scrollbar drag in progress — continue regardless of mx
+		if self._sbDrag:
+			if release:
+				self._sbDrag = False
+			else:
+				row   = my - by
+				delta = row - self._sbDragAnchorRow
+				self._scrollY = max(0, min(
+					max(0, total - visH),
+					self._sbDragAnchorScroll + round(delta * total / visH),
+				))
+				self._markDirty()
+			return True
+
+		# Scrollbar click: press on thumb starts drag; above/below pages
+		if total > visH and barX < self._x + self._w and mx == barX:
+			row        = my - by
+			thumbStart = int(self._scrollY * visH / total)
+			thumbSize  = max(1, int(visH * visH / total))
+			if 0 <= row < visH:
+				if thumbStart <= row < thumbStart + thumbSize:
+					if press:
+						self._sbDrag             = True
+						self._sbDragAnchorRow    = row
+						self._sbDragAnchorScroll = self._scrollY
+				elif row < thumbStart:
+					self._scrollY = max(0, self._scrollY - visH)
+					self._markDirty()
+				else:
+					self._scrollY = min(max(0, total - visH), self._scrollY + visH)
+					self._markDirty()
+			return True
+
+		# Normal item click
+		i = self._scrollY + (my - self._y - bd)
 		if 0 <= i < len(self._items):
 			mode = self._opts.get('selectmode', 'browse')
 			self._active = i

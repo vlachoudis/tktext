@@ -45,6 +45,8 @@ def buildDemo():
 	for fruit in ('Apple', 'Banana', 'Cherry', 'Date', 'Elderberry',
 			'Fig', 'Grape', 'Honeydew', 'Kiwi', 'Lemon'):
 		lb.insert(tk.END, fruit)
+	for i in range(1,1001):
+		lb.insert(tk.END, f"Item #{i}")
 	lb.pack(fill=tk.BOTH, expand=True)
 
 	statusVar = tk.StringVar(value='Select a fruit')

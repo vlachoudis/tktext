@@ -137,8 +137,11 @@ class Text(Widget):
 			self._undoStack.append(('insert', r, c, chars))
 			self._redoStack.clear()
 
-		lines = chars.split('\n')
-		tail  = self._buf[r][c:]
+		lines  = chars.split('\n')
+		nLines = len(lines) - 1
+		self._adjustTagsForInsert(r, c, nLines, len(lines[-1]) if nLines else len(lines[0]))
+
+		tail = self._buf[r][c:]
 		self._buf[r] = self._buf[r][:c] + lines[0]
 
 		for i in range(1, len(lines)):
@@ -168,6 +171,8 @@ class Text(Widget):
 		# Normalise order
 		if (r1, c1) > (r2, c2):
 			r1, c1, r2, c2 = r2, c2, r1, c1
+
+		self._adjustTagsForDelete(r1, c1, r2, c2)
 
 		if r1 == r2:
 			self._buf[r1] = self._buf[r1][:c1] + self._buf[r1][c2:]
@@ -317,6 +322,48 @@ class Text(Widget):
 	edit_separator = editSeparator
 
 	# ------------------------------------------------------------------
+	# Tag-range adjustment helpers
+	# ------------------------------------------------------------------
+
+	def _adjustTagsForDelete(self, r1, c1, r2, c2):
+		"""Shift all tag endpoints after a deletion of (r1,c1)..(r2,c2)."""
+		def adjust(pr, pc):
+			if (pr, pc) <= (r1, c1):
+				return (pr, pc)
+			if pr < r2 or (pr == r2 and pc <= c2):
+				return (r1, c1)			# inside deleted range → collapse
+			if pr == r2:				# same row as end, after c2
+				return (r1, c1 + (pc - c2))
+			return (pr - (r2 - r1), pc)		# row after deleted block
+
+		for name in list(self._tagRanges):
+			newRanges = []
+			for a, b, c, d in self._tagRanges[name]:
+				na, nb = adjust(a, b)
+				nc, nd = adjust(c, d)
+				if (na, nb) != (nc, nd):	# drop zero-length ranges
+					newRanges.append((na, nb, nc, nd))
+			self._tagRanges[name] = newRanges
+
+	def _adjustTagsForInsert(self, r1, c1, nLines, lastLineLen):
+		"""Shift all tag endpoints after an insertion at (r1,c1)."""
+		def adjust(pr, pc):
+			if pr < r1 or (pr == r1 and pc <= c1):
+				return (pr, pc)
+			if pr == r1:				# same row, after insertion point
+				if nLines == 0:
+					return (pr, pc + lastLineLen)
+				return (r1 + nLines, lastLineLen + (pc - c1))
+			return (pr + nLines, pc)		# row after insertion
+
+		for name in list(self._tagRanges):
+			self._tagRanges[name] = [
+				(adjust(a, b)[0], adjust(a, b)[1],
+				 adjust(c, d)[0], adjust(c, d)[1])
+				for a, b, c, d in self._tagRanges[name]
+			]
+
+	# ------------------------------------------------------------------
 	# Selection helpers
 	# ------------------------------------------------------------------
 
@@ -337,6 +384,7 @@ class Text(Widget):
 		r1, c1, r2, c2 = s
 		self._sel       = None
 		self._selAnchor = None
+		self._adjustTagsForDelete(r1, c1, r2, c2)
 		if r1 == r2:
 			self._buf[r1] = self._buf[r1][:c1] + self._buf[r1][c2:]
 		else:
@@ -577,10 +625,12 @@ class Text(Widget):
 		elif key in (KEY_BACKSPACE, 127):
 			if not self._deleteSelection():
 				if c > 0:
+					self._adjustTagsForDelete(r, c-1, r, c)
 					self._buf[r] = line[:c-1] + line[c:]
 					c -= 1
 				elif r > 0:
 					prevLen = len(self._buf[r-1])
+					self._adjustTagsForDelete(r-1, prevLen, r, 0)
 					self._buf[r-1] += self._buf[r]
 					del self._buf[r]
 					r -= 1
@@ -590,8 +640,10 @@ class Text(Widget):
 		elif key == KEY_DC:
 			if not self._deleteSelection():
 				if c < len(line):
+					self._adjustTagsForDelete(r, c, r, c+1)
 					self._buf[r] = line[:c] + line[c+1:]
 				elif r < len(self._buf) - 1:
+					self._adjustTagsForDelete(r, len(line), r+1, 0)
 					self._buf[r] = self._buf[r] + self._buf[r+1]
 					del self._buf[r+1]
 			else:
@@ -601,22 +653,25 @@ class Text(Widget):
 			r, c  = self._cur
 			line  = self._buf[r]
 			tail  = line[c:]
+			self._adjustTagsForInsert(r, c, 1, 0)
 			self._buf[r] = line[:c]
 			self._buf.insert(r+1, tail)
 			r += 1
 			c  = 0
 		elif key == KEY_TAB:
 			self._deleteSelection()
-			r, c  = self._cur
-			line  = self._buf[r]
+			r, c   = self._cur
+			line   = self._buf[r]
 			spaces = '    '
+			self._adjustTagsForInsert(r, c, 0, len(spaces))
 			self._buf[r] = line[:c] + spaces + line[c:]
 			c += len(spaces)
 		elif 32 <= key <= 126:
 			self._deleteSelection()
-			r, c  = self._cur
-			line  = self._buf[r]
-			ch    = chr(key)
+			r, c = self._cur
+			line = self._buf[r]
+			ch   = chr(key)
+			self._adjustTagsForInsert(r, c, 0, 1)
 			self._buf[r] = line[:c] + ch + line[c:]
 			c += 1
 		else:
