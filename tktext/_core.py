@@ -44,13 +44,14 @@ def _drawBorder(scr, y, x, h, w, relief='solid', attr=0):
 	"""
 	if h < 1 or w < 1:
 		return
+	_, sw = scr.getmaxyx()
 	tl, tr, bl, br, hz, vt = _BORDER_CHARS.get(relief, _BORDER_ASCII)
 	# top
 	_addStr(scr, y, x, tl + hz * max(0, w - 2) + tr, attr)
 	# sides
 	for i in range(1, h - 1):
 		_addCh(scr, y + i, x, vt, attr)
-		if x + w - 1 < getattr(curses, 'COLS', 9999):
+		if x + w - 1 < sw:
 			_addCh(scr, y + i, x + w - 1, vt, attr)
 	# bottom
 	if h > 1:

@@ -36,6 +36,9 @@ class Frame(Widget):
 	def rowkeyword(self, row):
 		return dict(self._rowCfg.get(row, {}))
 
+	def _isFocusable(self):
+		return False
+
 	# ------------------------------------------------------------------
 	# Layout
 	# ------------------------------------------------------------------

@@ -17,13 +17,17 @@ Usage example::
     root.mainLoop()
 """
 
-from ._app      import Tk
-from ._frame    import Frame
-from ._label    import Label
-from ._button   import Button
-from ._text     import Text
-from ._listbox  import Listbox
-from ._treeview import Treeview
+from ._app         import Tk
+from ._frame       import Frame
+from ._label       import Label
+from ._button      import Button
+from ._text        import Text
+from ._listbox     import Listbox
+from ._treeview    import Treeview
+from ._entry       import Entry
+from ._checkbutton import Checkbutton
+from ._radiobutton import Radiobutton
+from ._menu        import Menu, OptionMenu
 
 # ---------------------------------------------------------------------------
 # Constants – mirrors the names exported by tkinter
@@ -175,6 +179,7 @@ __version__ = '0.1.0'
 __all__ = [
 	# Widgets
 	'Tk', 'Frame', 'Label', 'Button', 'Text', 'Listbox', 'Treeview',
+	'Entry', 'Checkbutton', 'Radiobutton', 'Menu', 'OptionMenu',
 	# Variables
 	'Variable', 'StringVar', 'IntVar', 'DoubleVar', 'BooleanVar',
 	# Direction / fill constants

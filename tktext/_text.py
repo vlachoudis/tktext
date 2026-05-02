@@ -356,6 +356,8 @@ class Text(Widget):
 		self._scrollTo(r, c)
 
 	def _scrollTo(self, r, c):
+		if self._h <= 0 or self._w <= 0:
+			return
 		bd   = int(self._opts.get('borderwidth') or 0)
 		visH = max(1, self._h - 2*bd)
 		visW = max(1, self._w - 2*bd)

@@ -11,6 +11,13 @@ _layoutChildren() on each child that is itself a container.
 # Pack
 # ---------------------------------------------------------------------------
 
+def _p(v) -> int:
+	"""Normalise a pad value: tuple (a,b) → a+b, int → int."""
+	if isinstance(v, (tuple, list)):
+		return sum(int(x) for x in v)
+	return int(v or 0)
+
+
 def doPackLayout(container, children):
 	"""
 	*children* is a list of (widget, opts) pairs in packing order.
@@ -37,12 +44,12 @@ def doPackLayout(container, children):
 		if o.get('side', 'top') in ('left', 'right') and o.get('expand')]
 
 	usedH = sum(
-		w._preferredSize()[1] + 2*o.get('ipady', 0) + 2*o.get('pady', 0)
+		w._preferredSize()[1] + 2*_p(o.get('ipady', 0)) + 2*_p(o.get('pady', 0))
 		for w, o in children
 		if o.get('side', 'top') in ('top', 'bottom')
 	)
 	usedW = sum(
-		w._preferredSize()[0] + 2*o.get('ipadx', 0) + 2*o.get('padx', 0)
+		w._preferredSize()[0] + 2*_p(o.get('ipadx', 0)) + 2*_p(o.get('padx', 0))
 		for w, o in children
 		if o.get('side', 'top') in ('left', 'right')
 	)
@@ -54,10 +61,10 @@ def doPackLayout(container, children):
 	# ---- second pass: place widgets in cavity order ----
 	for widget, opts in children:
 		side   = opts.get('side', 'top')
-		padx   = opts.get('padx', 0)
-		pady   = opts.get('pady', 0)
-		ipadx  = opts.get('ipadx', 0)
-		ipady  = opts.get('ipady', 0)
+		padx   = _p(opts.get('padx',  0))
+		pady   = _p(opts.get('pady',  0))
+		ipadx  = _p(opts.get('ipadx', 0))
+		ipady  = _p(opts.get('ipady', 0))
 		fill   = opts.get('fill', 'none')
 		expand = opts.get('expand', False)
 		anchor = opts.get('anchor', 'center')
@@ -115,6 +122,9 @@ def doPackLayout(container, children):
 				wx = right - stripW - padx
 				right -= stripW + 2*padx
 
+		# Clip to container bounds — widget gets zero size when it overflows
+		wW = max(0, min(wW, cx + cw - wx))
+		wH = max(0, min(wH, cy + ch - wy))
 		widget._doLayout(wx, wy, wW, wH)
 		if hasattr(widget, '_layoutChildren'):
 			widget._layoutChildren()

@@ -17,7 +17,7 @@ class Tk(Frame):
 		# No parent for the root
 		super().__init__(parent=None, **kwargs)
 		self._title		= 'tktext'
-		self._colors	= ColorManager()
+		self._colors		= ColorManager()
 		self._scr		= None
 		self._focusWidget	= None
 		self._dragWidget	= None	# widget that owns the current mouse drag
@@ -25,6 +25,7 @@ class Tk(Frame):
 		self._dirty		= True
 		self._afterCallbacks	= []	# list of (delay_ms, func) – simplified
 		self._vars		= {}
+		self._postedMenus	= []	# stack of currently visible Menu overlays
 
 	# ------------------------------------------------------------------
 	# Title
@@ -151,14 +152,19 @@ class Tk(Frame):
 	# ------------------------------------------------------------------
 
 	def _onKey(self, key):
+		# Menus take priority over the focused widget
+		if self._postedMenus:
+			if self._postedMenus[-1]._handleKey(key):
+				self._dirty = True
+				return
 		fw = self._focusWidget
 		if fw and fw._handleKey(key):
 			self._dirty = True
 			return
-		# Bubble up (not common but handle it)
+		# Bubble up through all ancestors including root
 		if fw:
 			p = fw._parent
-			while p and not p._isRoot:
+			while p:
 				if p._handleKey(key):
 					self._dirty = True
 					return
@@ -167,6 +173,28 @@ class Tk(Frame):
 	def _onMouse(self, mx, my, bstate):
 		release = bool(bstate & (curses.BUTTON1_RELEASED | curses.BUTTON1_CLICKED))
 		press   = bool(bstate & curses.BUTTON1_PRESSED)
+
+		# Route to posted menus first
+		if self._postedMenus:
+			for menu in reversed(self._postedMenus):
+				mw = menu._menuWidth()
+				mh = menu._menuHeight()
+				px = menu._postX
+				py = menu._postY
+				if px + mw > self._w:
+					px = max(0, self._w - mw)
+				if py + mh > self._h:
+					py = max(0, self._h - mh)
+				if px <= mx < px + mw and py <= my < py + mh:
+					menu._handleMouse(mx, my, bstate)
+					self._dirty = True
+					return
+			# Click outside all menus
+			if press:
+				for m in list(self._postedMenus):
+					m.unpost()
+				self._dirty = True
+				# fall through to handle click on widget beneath
 
 		# During a drag, keep routing to the widget that received the press
 		if self._dragWidget is not None:
@@ -180,7 +208,8 @@ class Tk(Frame):
 			if press:
 				self._dragWidget = target
 
-		if press and target._isFocusable():
+		clicked = bool(bstate & curses.BUTTON1_CLICKED)
+		if (press or clicked) and target._isFocusable():
 			self._setFocus(target)
 
 		target._handleMouse(mx, my, bstate)
@@ -208,6 +237,10 @@ class Tk(Frame):
 			pass
 
 		self._renderChildren(scr)
+
+		# Render posted menus on top of everything
+		for menu in self._postedMenus:
+			menu.render(scr)
 
 		# Draw cursor on focused widget if it exposes a cursor position
 		fw = self._focusWidget
