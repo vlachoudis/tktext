@@ -1,5 +1,6 @@
 import curses
 import sys
+import time
 
 from ._colors import ColorManager
 from ._core import Widget, _fillRect
@@ -23,9 +24,15 @@ class Tk(Frame):
 		self._dragWidget	= None	# widget that owns the current mouse drag
 		self._quit		= False
 		self._dirty		= True
-		self._afterCallbacks	= []	# list of (delay_ms, func) – simplified
+		self._afterCallbacks	= []	# list of (fire_time, handle, func, args)
+		self._afterSerial	= 0	# incrementing ID for after handles
 		self._vars		= {}
 		self._postedMenus	= []	# stack of currently visible Menu overlays
+		self._postedDialogs	= []	# stack of active modal dialogs
+
+		# Register as the global app so messagebox/filedialog can find us
+		import tktext._dialog as _dlg
+		_dlg._currentApp = self
 
 	# ------------------------------------------------------------------
 	# Title
@@ -81,6 +88,15 @@ class Tk(Frame):
 		self._redraw()
 
 		while not self._quit:
+			# Compute getch() timeout from pending after-callbacks
+			if self._afterCallbacks:
+				now  = time.monotonic()
+				next_fire = min(item[0] for item in self._afterCallbacks)
+				ms   = max(0, int((next_fire - now) * 1000))
+			else:
+				ms = -1	# block indefinitely
+			stdscr.timeout(ms)
+
 			try:
 				key = stdscr.getch()
 			except KeyboardInterrupt:
@@ -103,8 +119,10 @@ class Tk(Frame):
 			elif key == KEY_BTAB:
 				self._focusPrev()
 
-			else:
+			elif key != -1:
 				self._onKey(key)
+
+			self._fireAfterCallbacks()
 
 			if self._dirty:
 				self._doLayout(0, 0, self._w, self._h)
@@ -242,6 +260,10 @@ class Tk(Frame):
 		for menu in self._postedMenus:
 			menu.render(scr)
 
+		# Render modal dialogs on top of menus
+		for dlg in self._postedDialogs:
+			dlg.render(scr)
+
 		# Draw cursor on focused widget if it exposes a cursor position
 		fw = self._focusWidget
 		if fw and hasattr(fw, '_cursorPos'):
@@ -298,10 +320,41 @@ class Tk(Frame):
 
 	update_idletasks = updateIdletasks
 
-	def after(self, ms, func=None, *args):
-		"""Simplified after: just call immediately (no real scheduler here)."""
-		if func:
-			func(*args)
+	def after(self, ms: int, func=None, *args):
+		"""Schedule *func* to be called after *ms* milliseconds."""
+		if func is None:
+			return None
+		self._afterSerial += 1
+		handle    = self._afterSerial
+		fire_time = time.monotonic() + ms / 1000.0
+		self._afterCallbacks.append((fire_time, handle, func, args))
+		return handle
+
+	def after_cancel(self, handle):
+		"""Cancel a previously scheduled after() callback."""
+		self._afterCallbacks = [
+			item for item in self._afterCallbacks if item[1] != handle
+		]
+
+	def after_idle(self, func, *args):
+		"""Schedule *func* for the next idle iteration."""
+		return self.after(0, func, *args)
+
+	def _fireAfterCallbacks(self):
+		now       = time.monotonic()
+		remaining = []
+		fired     = []
+		for item in self._afterCallbacks:
+			if item[0] <= now:
+				fired.append(item)
+			else:
+				remaining.append(item)
+		self._afterCallbacks = remaining
+		for _, _, func, args in fired:
+			try:
+				func(*args)
+			except Exception:
+				pass
 
 	def geometry(self, geomstr=None):
 		"""No-op for terminal apps; present for API compatibility."""

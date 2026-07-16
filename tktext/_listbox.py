@@ -346,6 +346,7 @@ class Listbox(Widget):
 			self._markDirty()
 			return True
 
+		clicked = bool(bstate & curses.BUTTON1_CLICKED)
 		release = bool(bstate & (curses.BUTTON1_RELEASED | curses.BUTTON1_CLICKED))
 		press   = bool(bstate & curses.BUTTON1_PRESSED)
 
@@ -363,17 +364,23 @@ class Listbox(Widget):
 				self._markDirty()
 			return True
 
-		# Scrollbar click: press on thumb starts drag; above/below pages
+		# Scrollbar interactions (only on press or click, not pure motion)
 		if total > visH and barX < self._x + self._w and mx == barX:
 			row        = my - by
 			thumbStart = int(self._scrollY * visH / total)
 			thumbSize  = max(1, int(visH * visH / total))
-			if 0 <= row < visH:
+			if 0 <= row < visH and (press or clicked):
 				if thumbStart <= row < thumbStart + thumbSize:
 					if press:
+						# Hold+drag: start tracking
 						self._sbDrag             = True
 						self._sbDragAnchorRow    = row
 						self._sbDragAnchorScroll = self._scrollY
+					else:
+						# Single click on thumb: jump to proportional position
+						newScroll = round(row / max(1, visH - 1) * max(0, total - visH))
+						self._scrollY = max(0, min(max(0, total - visH), newScroll))
+						self._markDirty()
 				elif row < thumbStart:
 					self._scrollY = max(0, self._scrollY - visH)
 					self._markDirty()
@@ -383,13 +390,14 @@ class Listbox(Widget):
 			return True
 
 		# Normal item click
-		i = self._scrollY + (my - self._y - bd)
-		if 0 <= i < len(self._items):
-			mode = self._opts.get('selectmode', 'browse')
-			self._active = i
-			self._toggleOrSelect(i, mode)
-			self._dispatch('<ListboxSelect>', _LBEvent(self, i))
-			self._markDirty()
+		if press or clicked:
+			i = self._scrollY + (my - self._y - bd)
+			if 0 <= i < len(self._items):
+				mode = self._opts.get('selectmode', 'browse')
+				self._active = i
+				self._toggleOrSelect(i, mode)
+				self._dispatch('<ListboxSelect>', _LBEvent(self, i))
+				self._markDirty()
 		return False
 
 

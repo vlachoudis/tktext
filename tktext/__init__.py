@@ -28,6 +28,12 @@ from ._entry       import Entry
 from ._checkbutton import Checkbutton
 from ._radiobutton import Radiobutton
 from ._menu        import Menu, OptionMenu
+from ._scale       import Scale
+from ._spinbox     import Spinbox
+from ._notebook    import Notebook
+from ._combobox    import Combobox
+from ._scrollbar   import Scrollbar
+from . import ttk
 
 # ---------------------------------------------------------------------------
 # Constants – mirrors the names exported by tkinter
@@ -180,6 +186,8 @@ __all__ = [
 	# Widgets
 	'Tk', 'Frame', 'Label', 'Button', 'Text', 'Listbox', 'Treeview',
 	'Entry', 'Checkbutton', 'Radiobutton', 'Menu', 'OptionMenu',
+	'Scale', 'Spinbox', 'Notebook', 'Combobox', 'Scrollbar',
+	'ttk',
 	# Variables
 	'Variable', 'StringVar', 'IntVar', 'DoubleVar', 'BooleanVar',
 	# Direction / fill constants

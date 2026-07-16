@@ -11,6 +11,8 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 
 import tktext as tk
+import tktext.messagebox as messagebox
+import tktext.filedialog as filedialog
 
 def buildDemo():
 	root = tk.Tk()
@@ -26,7 +28,7 @@ def buildDemo():
 	banner.pack(fill=tk.X)
 
 	# ----------------------------------------------------------------
-	# Main area: left panel + right panel
+	# Main area: left panel + right Notebook
 	# ----------------------------------------------------------------
 	main = tk.Frame(root)
 	main.pack(fill=tk.BOTH, expand=True)
@@ -45,8 +47,8 @@ def buildDemo():
 	for fruit in ('Apple', 'Banana', 'Cherry', 'Date', 'Elderberry',
 			'Fig', 'Grape', 'Honeydew', 'Kiwi', 'Lemon'):
 		lb.insert(tk.END, fruit)
-	for i in range(1,1001):
-		lb.insert(tk.END, f"Item #{i}")
+	for i in range(1, 1001):
+		lb.insert(tk.END, f'Item #{i}')
 	lb.pack(fill=tk.BOTH, expand=True)
 
 	statusVar = tk.StringVar(value='Select a fruit')
@@ -59,20 +61,20 @@ def buildDemo():
 			statusVar.set(f'Selected: {lb.get(sel[0])}')
 
 	lb.bind('<<ListboxSelect>>', onLbSelect)
-	lb.bind('<ListboxSelect>', onLbSelect)
 
-	# ---- right panel -----------------------------------------------
-	right = tk.Frame(main, relief=tk.RIDGE, borderwidth=1)
-	right.grid(row=0, column=1, sticky=tk.NSEW, padx=1, pady=1)
-	right.columnconfigure(0, weight=1)
-	right.rowconfigure(1, weight=1)
-	right.rowconfigure(3, weight=1)
+	# ---- right panel: Notebook with three tabs ---------------------
+	nb = tk.Notebook(main)
+	nb.grid(row=0, column=1, sticky=tk.NSEW, padx=1, pady=1)
 
-	# Treeview
-	tk.Label(right, text='Treeview', fg='yellow', anchor='w').grid(
+	# Tab 1 – Treeview -----------------------------------------------
+	tvTab = tk.Frame(nb, fg='white')
+	tvTab.columnconfigure(0, weight=1)
+	tvTab.rowconfigure(1, weight=1)
+
+	tk.Label(tvTab, text='Treeview', fg='yellow', anchor='w').grid(
 		row=0, column=0, sticky=tk.EW)
 
-	tv = tk.Treeview(right, columns=('size', 'type'),
+	tv = tk.Treeview(tvTab, columns=('size', 'type'),
 		show='tree headings', height=7, fg='white')
 	tv.heading('#0',   text='Name')
 	tv.heading('size', text='Size')
@@ -90,12 +92,17 @@ def buildDemo():
 	tv.insert('',   'end', text='README.md',  values=['1K',  'md'])
 	tv.item(docs, open=True)
 	tv.grid(row=1, column=0, sticky=tk.NSEW)
+	nb.add(tvTab, text='Treeview')
 
-	# Text editor
-	tk.Label(right, text='Text editor', fg='yellow', anchor='w').grid(
-		row=2, column=0, sticky=tk.EW)
+	# Tab 2 – Text editor --------------------------------------------
+	edTab = tk.Frame(nb, fg='white')
+	edTab.columnconfigure(0, weight=1)
+	edTab.rowconfigure(1, weight=1)
 
-	editor = tk.Text(right, width=30, height=6, wrap=tk.WORD,
+	tk.Label(edTab, text='Text editor', fg='yellow', anchor='w').grid(
+		row=0, column=0, sticky=tk.EW)
+
+	editor = tk.Text(edTab, width=30, height=6, wrap=tk.WORD,
 		fg='white', relief=tk.SUNKEN, borderwidth=1)
 	editor.insert('1.0',
 		'Type here…\n'
@@ -103,7 +110,75 @@ def buildDemo():
 		'Ctrl+A selects all.')
 	editor.tagConfigure('highlight', background='yellow')
 	editor.tagAdd('highlight', '1.0', '1.4')
-	editor.grid(row=3, column=0, sticky=tk.NSEW)
+	editor.grid(row=1, column=0, sticky=tk.NSEW)
+	nb.add(edTab, text='Editor')
+
+	# Tab 3 – New widgets --------------------------------------------
+	wTab = tk.Frame(nb, fg='white')
+
+	tk.Label(wTab, text='New widgets', fg='yellow', anchor='w').pack(fill=tk.X)
+
+	# Scale
+	scaleVar  = tk.DoubleVar(value=50.0)
+	scaleRow  = tk.Frame(wTab)
+	tk.Label(scaleRow, text='Scale:', fg='yellow', anchor='w', width=9).pack(side=tk.LEFT)
+	sc = tk.Scale(scaleRow, variable=scaleVar, from_=0, to=100,
+		orient=tk.HORIZONTAL, length=16, showvalue=1, resolution=1, fg='white')
+	sc.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+	scaleRow.pack(fill=tk.X, padx=2, pady=2)
+
+	# Spinbox
+	spinRow = tk.Frame(wTab)
+	tk.Label(spinRow, text='Spinbox:', fg='yellow', anchor='w', width=9).pack(side=tk.LEFT)
+	spn = tk.Spinbox(spinRow, from_=0, to=100, increment=5, width=8, fg='white')
+	spn.pack(side=tk.LEFT, padx=2)
+	spinRow.pack(fill=tk.X, padx=2, pady=1)
+
+	# Combobox
+	cbRow = tk.Frame(wTab)
+	tk.Label(cbRow, text='Combobox:', fg='yellow', anchor='w', width=9).pack(side=tk.LEFT)
+	cb = tk.Combobox(cbRow,
+		values=('Python', 'C++', 'Fortran', 'Julia', 'Rust', 'Go', 'Haskell'),
+		width=10, state='readonly', fg='white')
+	cb.current(0)
+	cb.pack(side=tk.LEFT, padx=2)
+	cbRow.pack(fill=tk.X, padx=2, pady=1)
+
+	wResult = tk.Label(wTab, text='← interact with the widgets above',
+		fg='cyan', anchor='w')
+	wResult.pack(fill=tk.X, padx=4, pady=1)
+
+	def refreshResult(v=None):
+		wResult.configure(
+			text=f'Scale={int(scaleVar.get())}  Spin={spn.get()}  Combo={cb.get()}')
+
+	sc.configure(command=lambda v: refreshResult())
+	cb.bind('<<ComboboxSelected>>', lambda e: refreshResult())
+
+	# Dialogs demo
+	dlgRow = tk.Frame(wTab)
+	tk.Button(dlgRow, text='Show Info', relief='single',
+		command=lambda: messagebox.showinfo(
+			'Widget values',
+			f'Scale  = {int(scaleVar.get())}\n'
+			f'Spinbox = {spn.get()}\n'
+			f'Combo  = {cb.get()}')).pack(side=tk.LEFT, padx=2)
+	tk.Button(dlgRow, text='Ask Yes/No', relief='single',
+		command=lambda: wResult.configure(
+			text='Answer: Yes' if messagebox.askyesno(
+				'Question', 'Do you like tktext?') else 'Answer: No')
+		).pack(side=tk.LEFT, padx=2)
+	tk.Button(dlgRow, text='Open File…', relief='single',
+		command=lambda: wResult.configure(
+			text=filedialog.askopenfilename(title='Pick a file') or '(cancelled)')
+		).pack(side=tk.LEFT, padx=2)
+	tk.Button(dlgRow, text='Save As…', relief='single',
+		command=lambda: wResult.configure(
+			text=filedialog.asksaveasfilename(title='Save As') or '(cancelled)')
+		).pack(side=tk.LEFT, padx=2)
+	dlgRow.pack(fill=tk.X, padx=2, pady=3)
+
+	nb.add(wTab, text='Widgets')
 
 	# ----------------------------------------------------------------
 	# Controls row: Entry, Checkbutton, Radiobutton, OptionMenu
@@ -155,8 +230,8 @@ def buildDemo():
 
 	# Popup menu attached to a button
 	popupMenu = tk.Menu(root)
-	popupMenu.add_command(label='About…',    command=lambda: _showAbout(editor))
-	popupMenu.add_command(label='Clear',     command=lambda: _clearEditor(editor))
+	popupMenu.add_command(label='About…',    command=lambda: _showAbout(editor, nb))
+	popupMenu.add_command(label='Clear',     command=lambda: _clearEditor(editor, nb))
 	popupMenu.add_separator()
 	subMenu = tk.Menu(root)
 	subMenu.add_command(label='Red',   command=lambda: statusVar.set('colour: red'))
@@ -175,7 +250,7 @@ def buildDemo():
 	menuBtn.pack(side=tk.LEFT, padx=2, pady=1)
 
 	tk.Button(btnFrame, text='Clear editor', relief='double',
-		command=lambda: _clearEditor(editor)).pack(side=tk.LEFT, padx=2, pady=1)
+		command=lambda: _clearEditor(editor, nb)).pack(side=tk.LEFT, padx=2, pady=1)
 
 	tk.Button(btnFrame, text='Quit',
 		command=root.quit, borderwidth=0,
@@ -199,12 +274,13 @@ def buildDemo():
 	return root
 
 
-def _clearEditor(editor):
+def _clearEditor(editor, nb):
 	editor.delete('1.0', 'end')
 	editor.insert('1.0', '(cleared)')
+	nb.select(1)	# switch to Editor tab
 
 
-def _showAbout(editor):
+def _showAbout(editor, nb):
 	editor.delete('1.0', 'end')
 	editor.insert('1.0',
 		'tktext v0.1\n'
@@ -213,9 +289,13 @@ def _showAbout(editor):
 		'Widgets: Label, Button, Entry,\n'
 		'Text, Listbox, Treeview,\n'
 		'Checkbutton, Radiobutton,\n'
-		'Menu, OptionMenu.\n\n'
+		'Menu, OptionMenu, Scale,\n'
+		'Spinbox, Notebook, Combobox,\n'
+		'Scrollbar.\n\n'
+		'Dialogs: messagebox, filedialog.\n\n'
 		'TAB / Shift-TAB: focus\n'
 		'F10 / q: quit')
+	nb.select(1)	# switch to Editor tab
 
 
 def main():
