@@ -1,138 +1,340 @@
 """
 Layout managers: pack, grid, place.
 
-All functions receive the container widget and operate on its _children,
-setting each child's _x, _y, _w, _h.  After layout the container must call
-_layoutChildren() on each child that is itself a container.
+All functions receive a *container* (any object exposing _x, _y, _w, _h —
+the content rectangle) and a list of (widget, opts) pairs.  They set each
+child's geometry through child._doLayout() and recurse into containers.
+
+The pack implementation follows Tk's tkPack.c (cavity algorithm with
+XExpansion / YExpansion) so that expand / fill behave as in tkinter.
 """
+
+
+# ---------------------------------------------------------------------------
+# Option helpers
+# ---------------------------------------------------------------------------
+
+def _pads(v):
+	"""Normalise a pad value to (before, after): 2 → (2,2), (1,3) → (1,3)."""
+	if isinstance(v, (tuple, list)):
+		if len(v) == 0:
+			return (0, 0)
+		if len(v) == 1:
+			a = int(v[0] or 0)
+			return (a, a)
+		return (int(v[0] or 0), int(v[1] or 0))
+	if isinstance(v, str):
+		parts = v.split()
+		if len(parts) >= 2:
+			return (int(parts[0]), int(parts[1]))
+		v = parts[0] if parts else 0
+	a = int(v or 0)
+	return (a, a)
+
+
+def _p(v) -> int:
+	"""Total padding of a pad value: 2 → 4, (1,3) → 4."""
+	a, b = _pads(v)
+	return a + b
+
+
+def _ipad(v) -> int:
+	"""Internal padding total (ipadx=1 adds one cell on each side)."""
+	if isinstance(v, (tuple, list)):
+		v = v[0] if v else 0
+	return 2 * int(v or 0)
+
+
+def _truthy(v) -> bool:
+	if isinstance(v, str):
+		return v.lower() not in ('', '0', 'false', 'no', 'off')
+	return bool(v)
+
+
+def _anchor(v) -> str:
+	"""Normalise an anchor: 'center' becomes '' so that letter tests
+	('e' in anchor, 'n' in anchor …) only see compass directions."""
+	v = str(v or 'center').lower()
+	return '' if v == 'center' else v
+
+
+def _sticky(v) -> str:
+	if isinstance(v, (tuple, list)):
+		v = ''.join(str(x) for x in v)
+	return str(v or '').lower()
+
+
+def _layoutWidget(widget, x, y, w, h):
+	w = max(0, w)
+	h = max(0, h)
+	if w == 0 or h == 0:
+		widget._unmapTree()
+		return
+	widget._doLayout(x, y, w, h)
+	if hasattr(widget, '_layoutChildren'):
+		widget._layoutChildren()
 
 
 # ---------------------------------------------------------------------------
 # Pack
 # ---------------------------------------------------------------------------
 
-def _p(v) -> int:
-	"""Normalise a pad value: tuple (a,b) → a+b, int → int."""
-	if isinstance(v, (tuple, list)):
-		return sum(int(x) for x in v)
-	return int(v or 0)
+def _isVertical(opts) -> bool:
+	return opts.get('side', 'top') in ('top', 'bottom')
+
+
+def _packItems(children):
+	"""Return [(widget, opts, reqW, reqH)] where req* include padding."""
+	items = []
+	for widget, opts in children:
+		pw, ph = widget._preferredSize()
+		items.append([widget, opts,
+			pw + _p(opts.get('padx', 0)) + _ipad(opts.get('ipadx', 0)),
+			ph + _p(opts.get('pady', 0)) + _ipad(opts.get('ipady', 0))])
+	return items
+
+
+def _packExtent(items):
+	"""Port of tkPack.c geometry propagation on precomputed items."""
+	width = height = maxW = maxH = 0
+	for _, opts, reqW, reqH in items:
+		if _isVertical(opts):
+			maxW	 = max(maxW, reqW + width)
+			height	+= reqH
+		else:
+			maxH	 = max(maxH, reqH + height)
+			width	+= reqW
+	return (max(maxW, width), max(maxH, height))
+
+
+def _shrinkToFit(items, availW, availH):
+	"""A terminal cannot grow like a toplevel window: when the packed
+	children request more than the container offers, take the shortage
+	from the expanding widgets first (down to one cell) so the widgets
+	packed after them stay visible."""
+	for axis, avail in ((0, availW), (1, availH)):
+		deficit = _packExtent(items)[axis] - avail
+		if deficit <= 0:
+			continue
+		for item in items:
+			opts = item[1]
+			if deficit <= 0:
+				break
+			if not _truthy(opts.get('expand')) or _isVertical(opts) != (axis == 1):
+				continue
+			take = min(deficit, max(0, item[2 + axis] - 1))
+			item[2 + axis] -= take
+			deficit        -= take
+
+
+def _expansion(items, start, cavity, vertical):
+	"""Port of tkPack.c XExpansion (vertical=False) / YExpansion."""
+	minExpand = cavity
+	numExpand = 0
+	for _, opts, reqW, reqH in items[start:]:
+		child = reqH if vertical else reqW
+		if _isVertical(opts) != vertical:
+			if numExpand:
+				minExpand = min(minExpand, (cavity - child) // numExpand)
+		else:
+			cavity -= child
+			if _truthy(opts.get('expand')):
+				numExpand += 1
+	if numExpand:
+		minExpand = min(minExpand, cavity // numExpand)
+	return max(0, minExpand)
 
 
 def doPackLayout(container, children):
 	"""
 	*children* is a list of (widget, opts) pairs in packing order.
-	Implements the classic tkinter cavity algorithm.
+	Implements the classic Tk cavity algorithm.
 	"""
 	if not children:
 		return
 
-	cx = container._x
-	cy = container._y
-	cw = container._w
-	ch = container._h
+	cavX = container._x
+	cavY = container._y
+	cavW = container._w
+	cavH = container._h
 
-	# Cavity edges (absolute screen coords)
-	top    = cy
-	left   = cx
-	right  = cx + cw
-	bottom = cy + ch
+	items = _packItems(children)
+	_shrinkToFit(items, cavW, cavH)
 
-	# ---- first pass: identify expand widgets and remaining space ----
-	tbExpand = [(w, o) for w, o in children
-		if o.get('side', 'top') in ('top', 'bottom') and o.get('expand')]
-	lrExpand = [(w, o) for w, o in children
-		if o.get('side', 'top') in ('left', 'right') and o.get('expand')]
+	for i, (widget, opts, reqW, reqH) in enumerate(items):
+		side	= opts.get('side', 'top')
+		fill	= str(opts.get('fill', 'none') or 'none').lower()
+		expand	= _truthy(opts.get('expand', False))
+		anchor	= _anchor(opts.get('anchor', 'center'))
+		padL, padR = _pads(opts.get('padx', 0))
+		padT, padB = _pads(opts.get('pady', 0))
+		borderX	= padL + padR
+		borderY	= padT + padB
 
-	usedH = sum(
-		w._preferredSize()[1] + 2*_p(o.get('ipady', 0)) + 2*_p(o.get('pady', 0))
-		for w, o in children
-		if o.get('side', 'top') in ('top', 'bottom')
-	)
-	usedW = sum(
-		w._preferredSize()[0] + 2*_p(o.get('ipadx', 0)) + 2*_p(o.get('padx', 0))
-		for w, o in children
-		if o.get('side', 'top') in ('left', 'right')
-	)
-	extraH = max(0, ch - usedH)
-	extraW = max(0, cw - usedW)
-	perExpH = extraH // len(tbExpand) if tbExpand else 0
-	perExpW = extraW // len(lrExpand) if lrExpand else 0
-
-	# ---- second pass: place widgets in cavity order ----
-	for widget, opts in children:
-		side   = opts.get('side', 'top')
-		padx   = _p(opts.get('padx',  0))
-		pady   = _p(opts.get('pady',  0))
-		ipadx  = _p(opts.get('ipadx', 0))
-		ipady  = _p(opts.get('ipady', 0))
-		fill   = opts.get('fill', 'none')
-		expand = opts.get('expand', False)
-		anchor = opts.get('anchor', 'center')
-
-		pw, ph = widget._preferredSize()
-		cavW = right - left
-		cavH = bottom - top
-
+		# ---- allocate the parcel for this slave ----
 		if side in ('top', 'bottom'):
-			# strip height
-			stripH = ph + 2*ipady + (perExpH if expand and tbExpand else 0)
-			stripH = max(1, stripH)
-
-			wW = (cavW - 2*padx) if fill in ('x', 'both') else (pw + 2*ipadx)
-			wH = stripH if fill in ('y', 'both') else (ph + 2*ipady)
-			wW = max(1, wW)
-			wH = max(1, wH)
-
-			# horizontal anchor
-			if anchor in ('w', 'nw', 'sw'):
-				wx = left + padx
-			elif anchor in ('e', 'ne', 'se'):
-				wx = left + cavW - padx - wW
-			else:
-				wx = left + (cavW - wW) // 2
-
+			frameW = cavW
+			frameH = reqH
+			if expand:
+				frameH += _expansion(items, i, cavH, True)
+			cavH -= frameH
+			if cavH < 0:
+				frameH += cavH
+				cavH = 0
+			frameX = cavX
 			if side == 'top':
-				wy = top + pady
-				top += stripH + 2*pady
+				frameY = cavY
+				cavY  += frameH
 			else:
-				wy = bottom - stripH - pady
-				bottom -= stripH + 2*pady
-
-		else:  # left / right
-			stripW = pw + 2*ipadx + (perExpW if expand and lrExpand else 0)
-			stripW = max(1, stripW)
-
-			wW = stripW if fill in ('x', 'both') else (pw + 2*ipadx)
-			wH = (cavH - 2*pady) if fill in ('y', 'both') else (ph + 2*ipady)
-			wW = max(1, wW)
-			wH = max(1, wH)
-
-			# vertical anchor
-			if anchor in ('n', 'nw', 'ne'):
-				wy = top + pady
-			elif anchor in ('s', 'sw', 'se'):
-				wy = top + cavH - pady - wH
-			else:
-				wy = top + (cavH - wH) // 2
-
+				frameY = cavY + cavH
+		else:
+			frameH = cavH
+			frameW = reqW
+			if expand:
+				frameW += _expansion(items, i, cavW, False)
+			cavW -= frameW
+			if cavW < 0:
+				frameW += cavW
+				cavW = 0
+			frameY = cavY
 			if side == 'left':
-				wx = left + padx
-				left += stripW + 2*padx
+				frameX = cavX
+				cavX  += frameW
 			else:
-				wx = right - stripW - padx
-				right -= stripW + 2*padx
+				frameX = cavX + cavW
 
-		# Clip to container bounds — widget gets zero size when it overflows
-		wW = max(0, min(wW, cx + cw - wx))
-		wH = max(0, min(wH, cy + ch - wy))
-		widget._doLayout(wx, wy, wW, wH)
-		if hasattr(widget, '_layoutChildren'):
-			widget._layoutChildren()
+		# ---- place the slave inside its parcel ----
+		width	= reqW - borderX
+		height	= reqH - borderY
+		if fill in ('x', 'both') or width > frameW - borderX:
+			width = frameW - borderX
+		if fill in ('y', 'both') or height > frameH - borderY:
+			height = frameH - borderY
+
+		if 'w' in anchor:
+			x = frameX + padL
+		elif 'e' in anchor:
+			x = frameX + frameW - width - padR
+		else:
+			x = frameX + padL + (frameW - borderX - width) // 2
+		if 'n' in anchor:
+			y = frameY + padT
+		elif 's' in anchor:
+			y = frameY + frameH - height - padB
+		else:
+			y = frameY + padT + (frameH - borderY - height) // 2
+
+		_layoutWidget(widget, x, y, width, height)
+
+
+def packPreferredSize(children):
+	"""Return the (w, h) a container needs for its packed *children*."""
+	return _packExtent(_packItems(children))
 
 
 # ---------------------------------------------------------------------------
 # Grid
 # ---------------------------------------------------------------------------
+
+def _gridMinSizes(children, rowCfg, colCfg):
+	"""Return (minColW, minRowH) lists for the gridded *children*."""
+	nRows = max(o['row'] + o.get('rowspan', 1) for _, o in children)
+	nCols = max(o['column'] + o.get('columnspan', 1) for _, o in children)
+	nRows = max(nRows, max((r + 1 for r in rowCfg), default=0))
+	nCols = max(nCols, max((c + 1 for c in colCfg), default=0))
+
+	minColW = [0] * nCols
+	minRowH = [0] * nRows
+
+	# Apply minsize from config
+	for c, cfg in colCfg.items():
+		if 0 <= c < nCols:
+			minColW[c] = max(minColW[c], int(cfg.get('minsize', 0) or 0))
+	for r, cfg in rowCfg.items():
+		if 0 <= r < nRows:
+			minRowH[r] = max(minRowH[r], int(cfg.get('minsize', 0) or 0))
+
+	# Single-span widgets first, then spanning widgets grow the spanned
+	# cells (extra goes to weighted cells, else to the last one).
+	ordered = sorted(children, key=lambda wo: (wo[1].get('columnspan', 1),
+		wo[1].get('rowspan', 1)))
+	for widget, opts in ordered:
+		r  = opts['row']
+		c  = opts['column']
+		rs = opts.get('rowspan', 1)
+		cs = opts.get('columnspan', 1)
+		pw, ph = widget._preferredSize()
+		pw += _ipad(opts.get('ipadx', 0)) + _p(opts.get('padx', 0))
+		ph += _ipad(opts.get('ipady', 0)) + _p(opts.get('pady', 0))
+		_growSpan(minColW, c, cs, pw, colCfg)
+		_growSpan(minRowH, r, rs, ph, rowCfg)
+	return minColW, minRowH
+
+
+def _growSpan(sizes, start, span, need, cfg):
+	have = sum(sizes[start:start + span])
+	if need <= have:
+		return
+	extra   = need - have
+	idx     = list(range(start, start + span))
+	weights = [int(cfg.get(i, {}).get('weight', 0) or 0) for i in idx]
+	total   = sum(weights)
+	if total <= 0:
+		sizes[idx[-1]] += extra
+		return
+	given = 0
+	for i, wgt in zip(idx, weights):
+		add = extra * wgt // total
+		sizes[i] += add
+		given    += add
+	# remainder to the last weighted cell
+	for i, wgt in reversed(list(zip(idx, weights))):
+		if wgt:
+			sizes[i] += extra - given
+			break
+
+
+def _distribute(sizes, avail, cfg):
+	"""Distribute extra space among weighted rows/columns; like Tk, take a
+	shortage from the weighted ones (down to their minsize)."""
+	extra	= avail - sum(sizes)
+	weights	= [int(cfg.get(i, {}).get('weight', 0) or 0) for i in range(len(sizes))]
+	total	= sum(weights)
+	if total <= 0 or extra == 0:
+		return list(sizes)
+	if extra < 0:
+		out     = list(sizes)
+		deficit = -extra
+		while deficit > 0:
+			mins  = [int(cfg.get(i, {}).get('minsize', 0) or 0) for i in range(len(out))]
+			cands = [i for i in range(len(out)) if weights[i] and out[i] > max(1, mins[i])]
+			if not cands:
+				break
+			wsum = sum(weights[i] for i in cands)
+			took = 0
+			for i in cands:
+				take = min(out[i] - max(1, mins[i]),
+					max(1, deficit * weights[i] // wsum), deficit - took)
+				out[i] -= take
+				took   += take
+				if took >= deficit:
+					break
+			deficit -= took
+			if took == 0:
+				break
+		return out
+	out	= list(sizes)
+	given	= 0
+	for i, wgt in enumerate(weights):
+		add	 = extra * wgt // total
+		out[i]	+= add
+		given	+= add
+	for i in range(len(out) - 1, -1, -1):
+		if weights[i]:
+			out[i] += extra - given
+			break
+	return out
+
 
 def doGridLayout(container, children, rowCfg, colCfg):
 	"""
@@ -145,133 +347,69 @@ def doGridLayout(container, children, rowCfg, colCfg):
 
 	cx = container._x
 	cy = container._y
-	cw = container._w
-	ch = container._h
 
-	# ---- find grid extents ----
-	maxRow = max(o['row'] + o.get('rowspan', 1) - 1 for _, o in children)
-	maxCol = max(o['column'] + o.get('columnspan', 1) - 1 for _, o in children)
-	nRows = maxRow + 1
-	nCols = maxCol + 1
-
-	# ---- compute minimum sizes ----
-	minColW = [0] * nCols
-	minRowH = [0] * nRows
-
-	for widget, opts in children:
-		r = opts['row']
-		c = opts['column']
-		rs = opts.get('rowspan', 1)
-		cs = opts.get('columnspan', 1)
-		pw, ph = widget._preferredSize()
-		pw += 2*opts.get('ipadx', 0) + 2*opts.get('padx', 0)
-		ph += 2*opts.get('ipady', 0) + 2*opts.get('pady', 0)
-		# Distribute across spans (simplified: give all to first cell)
-		minColW[c] = max(minColW[c], pw // cs)
-		minRowH[r] = max(minRowH[r], ph // rs)
-
-	# Apply minsize from config
-	for c, cfg in colCfg.items():
-		if c < nCols:
-			minColW[c] = max(minColW[c], cfg.get('minsize', 0))
-	for r, cfg in rowCfg.items():
-		if r < nRows:
-			minRowH[r] = max(minRowH[r], cfg.get('minsize', 0))
-
-	# ---- distribute extra space to weighted rows/cols ----
-	totalMinW = sum(minColW)
-	totalMinH = sum(minRowH)
-	extraW = max(0, cw - totalMinW)
-	extraH = max(0, ch - totalMinH)
-
-	totalColWeight = sum(colCfg.get(c, {}).get('weight', 0) for c in range(nCols))
-	totalRowWeight = sum(rowCfg.get(r, {}).get('weight', 0) for r in range(nRows))
-
-	colW = list(minColW)
-	rowH = list(minRowH)
-
-	if totalColWeight > 0:
-		for c in range(nCols):
-			w = colCfg.get(c, {}).get('weight', 0)
-			colW[c] += int(extraW * w / totalColWeight)
-
-	if totalRowWeight > 0:
-		for r in range(nRows):
-			w = rowCfg.get(r, {}).get('weight', 0)
-			rowH[r] += int(extraH * w / totalRowWeight)
+	minColW, minRowH = _gridMinSizes(children, rowCfg, colCfg)
+	colW = _distribute(minColW, container._w, colCfg)
+	rowH = _distribute(minRowH, container._h, rowCfg)
 
 	# ---- compute cumulative offsets ----
 	colX = [cx]
-	for c in range(nCols - 1):
-		colX.append(colX[-1] + colW[c])
-
+	for w in colW:
+		colX.append(colX[-1] + w)
 	rowY = [cy]
-	for r in range(nRows - 1):
-		rowY.append(rowY[-1] + rowH[r])
+	for h in rowH:
+		rowY.append(rowY[-1] + h)
+
+	right  = cx + container._w
+	bottom = cy + container._h
 
 	# ---- place each widget ----
 	for widget, opts in children:
-		r    = opts['row']
-		c    = opts['column']
-		rs   = opts.get('rowspan', 1)
-		cs   = opts.get('columnspan', 1)
-		padx = opts.get('padx', 0)
-		pady = opts.get('pady', 0)
-		ipadx = opts.get('ipadx', 0)
-		ipady = opts.get('ipady', 0)
-		sticky = opts.get('sticky', '')
+		r	= opts['row']
+		c	= opts['column']
+		rs	= opts.get('rowspan', 1)
+		cs	= opts.get('columnspan', 1)
+		padL, padR = _pads(opts.get('padx', 0))
+		padT, padB = _pads(opts.get('pady', 0))
+		sticky	= _sticky(opts.get('sticky', ''))
 
-		# Cell bounding box
+		# Cell bounding box (clipped to the container)
 		cellX = colX[c]
 		cellY = rowY[r]
-		cellW = sum(colW[c:c+cs])
-		cellH = sum(rowH[r:r+rs])
+		cellW = min(colX[c + cs], right) - cellX
+		cellH = min(rowY[r + rs], bottom) - cellY
 
 		pw, ph = widget._preferredSize()
-		pw += 2*ipadx
-		ph += 2*ipady
+		pw += _ipad(opts.get('ipadx', 0))
+		ph += _ipad(opts.get('ipady', 0))
 
-		# Apply sticky (fill / anchor)
-		if 'e' in sticky and 'w' in sticky:
-			wW = cellW - 2*padx
-		elif 'e' in sticky:
-			wW = pw
-		elif 'w' in sticky:
-			wW = pw
-		else:
-			wW = pw
+		availW = cellW - padL - padR
+		availH = cellH - padT - padB
+		wW = availW if ('e' in sticky and 'w' in sticky) else min(pw, availW)
+		wH = availH if ('n' in sticky and 's' in sticky) else min(ph, availH)
 
-		if 'n' in sticky and 's' in sticky:
-			wH = cellH - 2*pady
-		elif 'n' in sticky:
-			wH = ph
-		elif 's' in sticky:
-			wH = ph
-		else:
-			wH = ph
-
-		wW = max(1, min(wW, cellW - 2*padx))
-		wH = max(1, min(wH, cellH - 2*pady))
-
-		# Horizontal position
 		if 'w' in sticky and 'e' not in sticky:
-			wx = cellX + padx
+			wx = cellX + padL
 		elif 'e' in sticky and 'w' not in sticky:
-			wx = cellX + cellW - wW - padx
+			wx = cellX + cellW - padR - wW
 		else:
-			wx = cellX + (cellW - wW) // 2
+			wx = cellX + padL + (availW - wW) // 2
 
-		# Vertical position
 		if 'n' in sticky and 's' not in sticky:
-			wy = cellY + pady
+			wy = cellY + padT
 		elif 's' in sticky and 'n' not in sticky:
-			wy = cellY + cellH - wH - pady
+			wy = cellY + cellH - padB - wH
 		else:
-			wy = cellY + (cellH - wH) // 2
+			wy = cellY + padT + (availH - wH) // 2
 
-		widget._doLayout(wx, wy, wW, wH)
-		if hasattr(widget, '_layoutChildren'):
-			widget._layoutChildren()
+		_layoutWidget(widget, wx, wy, wW, wH)
+
+
+def gridPreferredSize(children, rowCfg, colCfg):
+	if not children:
+		return (0, 0)
+	minColW, minRowH = _gridMinSizes(children, rowCfg, colCfg)
+	return (sum(minColW), sum(minRowH))
 
 
 # ---------------------------------------------------------------------------
@@ -287,8 +425,8 @@ def doPlaceLayout(container, children):
 	for widget, opts in children:
 		pw, ph = widget._preferredSize()
 
-		relx = opts.get('relx', 0.0) or 0.0
-		rely = opts.get('rely', 0.0) or 0.0
+		relx = float(opts.get('relx', 0.0) or 0.0)
+		rely = float(opts.get('rely', 0.0) or 0.0)
 		x = int(opts.get('x', 0) or 0) + int(relx * cw)
 		y = int(opts.get('y', 0) or 0) + int(rely * ch)
 
@@ -297,21 +435,25 @@ def doPlaceLayout(container, children):
 		ow = opts.get('width')
 		oh = opts.get('height')
 
-		wW = int(rw * cw) if rw is not None else (int(ow) if ow is not None else pw)
-		wH = int(rh * ch) if rh is not None else (int(oh) if oh is not None else ph)
-		wW = max(1, wW)
-		wH = max(1, wH)
+		wW = int(ow or 0) if ow is not None else 0
+		wH = int(oh or 0) if oh is not None else 0
+		if rw is not None:
+			wW += int(float(rw) * cw)
+		if rh is not None:
+			wH += int(float(rh) * ch)
+		if ow is None and rw is None:
+			wW = pw
+		if oh is None and rh is None:
+			wH = ph
 
-		anchor = opts.get('anchor', 'nw')
+		anchor = _anchor(opts.get('anchor', 'nw'))
 		if 'e' in anchor:
 			x -= wW
-		elif anchor not in ('nw', 'w', 'sw'):
+		elif 'w' not in anchor:
 			x -= wW // 2
 		if 's' in anchor:
 			y -= wH
-		elif anchor not in ('nw', 'n', 'ne'):
+		elif 'n' not in anchor:
 			y -= wH // 2
 
-		widget._doLayout(cx + x, cy + y, wW, wH)
-		if hasattr(widget, '_layoutChildren'):
-			widget._layoutChildren()
+		_layoutWidget(widget, cx + x, cy + y, wW, wH)

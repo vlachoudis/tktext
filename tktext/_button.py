@@ -1,5 +1,5 @@
-from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad
-from ._events import KEY_ENTER, KEY_CR, KEY_SPACE
+from ._core import Widget, _fillRect, _drawBorder, _drawText, _int
+from ._events import KEY_ENTER, KEY_SPACE, B1_RELEASE, B1_CLICK, MOTION
 
 
 class Button(Widget):
@@ -21,6 +21,7 @@ class Button(Widget):
 			'default':		'normal',
 			'compound':		'none',
 			'image':		None,
+			'padx':			1,
 		})
 		kwargs.setdefault('relief', 'raised')
 		kwargs.setdefault('borderwidth', 1)
@@ -30,12 +31,13 @@ class Button(Widget):
 	# ------------------------------------------------------------------
 
 	def invoke(self):
-		"""Call the button's command callback."""
+		"""Call the button's command callback and return its result."""
 		if self._opts.get('state') == 'disabled':
-			return
+			return None
 		cmd = self._opts.get('command')
 		if callable(cmd):
-			cmd()
+			return cmd()
+		return None
 
 	def flash(self):
 		"""Visual flash (no-op in terminal version)."""
@@ -47,86 +49,81 @@ class Button(Widget):
 		tv = self._opts.get('textvariable')
 		if tv is not None and hasattr(tv, 'get'):
 			return str(tv.get())
-		return str(self._opts.get('text') or '')
+		text = self._opts.get('text')
+		return '' if text is None else str(text)
 
 	def _preferredSize(self):
-		bd   = int(self._opts.get('borderwidth') or 0)
-		ow   = int(self._opts.get('width') or 0)
-		oh   = int(self._opts.get('height') or 0)
-		padx = int(self._opts.get('padx') or 1)
-		pady = int(self._opts.get('pady') or 0)
-		text = self._getText()
-		lines = text.split('\n') if text else ['']
+		bd    = self._cfgBorder()
+		ow    = _int(self._opts.get('width'))
+		oh    = _int(self._opts.get('height'))
+		padx  = max(0, _int(self._opts.get('padx')))
+		pady  = max(0, _int(self._opts.get('pady')))
+		lines = self._getText().split('\n')
 		textW = max(len(l) for l in lines)
 		textH = len(lines)
-		w = max(ow, textW) + 2*bd + 2*padx
-		h = max(oh, textH) + 2*bd + 2*pady
-		return (max(w, 3), max(h, 1))
+		w = (ow if ow > 0 else textW) + 2*bd + 2*padx
+		h = (oh if oh > 0 else textH) + 2*bd + 2*pady
+		return (max(w, 1), max(h, 1))
 
 	def render(self, scr):
-		if self._w <= 0 or self._h <= 0:
+		if not self._isMapped():
 			return
 
 		state   = self._opts.get('state', 'normal')
-		focused = self._focused
-		bd      = int(self._opts.get('borderwidth') or 0)
-		padx    = int(self._opts.get('padx') or 1)
-		pady    = int(self._opts.get('pady') or 0)
+		bd      = self._border()
+		padx    = max(0, _int(self._opts.get('padx')))
+		pady    = max(0, _int(self._opts.get('pady')))
 
 		# Choose colours
 		if state == 'disabled':
-			attr = self._getAttr(fg='gray')
-		elif focused:
-			afg = self._opts.get('activeforeground') or ''
-			abg = self._opts.get('activebackground') or ''
+			attr = self._getAttr(fg=self._opts.get('disabledforeground') or 'gray')
+		elif self._focused:
+			afg  = self._opts.get('activeforeground') or ''
+			abg  = self._opts.get('activebackground') or ''
 			attr = self._getAttr(fg=afg, bg=abg, reverse=not (afg or abg))
 		else:
 			attr = self._getAttr()
 
-		# Background
 		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
 
-		# Border
 		relief = self._opts.get('relief', 'raised')
-		if bd > 0:
+		if bd > 0 and relief != 'flat':
 			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
 
-		# Content area
-		cx = self._x + bd + padx
-		cy = self._y + bd + pady
-		cw = max(1, self._w - 2*bd - 2*padx)
-		ch = max(1, self._h - 2*bd - 2*pady)
-
-		text   = self._getText()
-		lines  = text.split('\n')
-		anchor = self._opts.get('anchor', 'center') or 'center'
-
-		startRow = max(0, (ch - len(lines)) // 2)
-
-		for i, line in enumerate(lines):
-			row = cy + startRow + i
-			if row < self._y or row >= self._y + self._h:
-				continue
-			_addStr(scr, row, cx, _pad(line, cw, 'center'), attr)
+		# Shrink padding first when the button is squeezed
+		innerW = self._w - 2*bd
+		innerH = self._h - 2*bd
+		padx   = min(padx, max(0, (innerW - 1) // 2))
+		pady   = min(pady, max(0, (innerH - 1) // 2))
+		_drawText(scr,
+			self._x + bd + padx, self._y + bd + pady,
+			innerW - 2*padx, innerH - 2*pady,
+			self._getText(),
+			self._opts.get('anchor') or 'center',
+			self._opts.get('justify') or 'center',
+			attr)
 
 	# ------------------------------------------------------------------
 	# Input
 	# ------------------------------------------------------------------
 
-	def _isFocusable(self):
-		return self._opts.get('state', 'normal') == 'normal'
-
 	def _handleKey(self, key):
-		if key in (KEY_ENTER, KEY_CR, KEY_SPACE):
+		if self._opts.get('state') == 'disabled':
+			return False
+		if key in (KEY_ENTER, KEY_SPACE):
 			self.invoke()
 			self._markDirty()
 			return True
-		return super()._handleKey(key)
+		return False
 
 	def _handleMouse(self, mx, my, bstate):
-		import curses
-		if bstate & (curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED):
-			self.invoke()
-			self._markDirty()
+		if self._opts.get('state') == 'disabled':
+			return False
+		# Like tkinter: the command fires when the button is released
+		# over the widget that received the press.
+		if bstate & (B1_RELEASE | B1_CLICK) and not (bstate & MOTION):
+			if self._hitTest(mx, my):
+				self.invoke()
+				self._markDirty()
 			return True
 		return False

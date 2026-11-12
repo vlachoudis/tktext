@@ -125,14 +125,14 @@ def buildDemo():
 	sc = tk.Scale(scaleRow, variable=scaleVar, from_=0, to=100,
 		orient=tk.HORIZONTAL, length=16, showvalue=1, resolution=1, fg='white')
 	sc.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
-	scaleRow.pack(fill=tk.X, padx=2, pady=2)
+	scaleRow.pack(fill=tk.X, padx=2, pady=1)
 
 	# Spinbox
 	spinRow = tk.Frame(wTab)
 	tk.Label(spinRow, text='Spinbox:', fg='yellow', anchor='w', width=9).pack(side=tk.LEFT)
 	spn = tk.Spinbox(spinRow, from_=0, to=100, increment=5, width=8, fg='white')
 	spn.pack(side=tk.LEFT, padx=2)
-	spinRow.pack(fill=tk.X, padx=2, pady=1)
+	spinRow.pack(fill=tk.X, padx=2)
 
 	# Combobox
 	cbRow = tk.Frame(wTab)
@@ -142,11 +142,11 @@ def buildDemo():
 		width=10, state='readonly', fg='white')
 	cb.current(0)
 	cb.pack(side=tk.LEFT, padx=2)
-	cbRow.pack(fill=tk.X, padx=2, pady=1)
+	cbRow.pack(fill=tk.X, padx=2)
 
 	wResult = tk.Label(wTab, text='← interact with the widgets above',
 		fg='cyan', anchor='w')
-	wResult.pack(fill=tk.X, padx=4, pady=1)
+	wResult.pack(fill=tk.X, padx=4)
 
 	def refreshResult(v=None):
 		wResult.configure(
@@ -176,7 +176,7 @@ def buildDemo():
 		command=lambda: wResult.configure(
 			text=filedialog.asksaveasfilename(title='Save As') or '(cancelled)')
 		).pack(side=tk.LEFT, padx=2)
-	dlgRow.pack(fill=tk.X, padx=2, pady=3)
+	dlgRow.pack(fill=tk.X, padx=2, pady=1)
 
 	nb.add(wTab, text='Widgets')
 

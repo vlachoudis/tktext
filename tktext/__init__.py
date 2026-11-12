@@ -14,11 +14,12 @@ Usage example::
     btn = tk.Button(root, text='Quit', command=root.quit)
     btn.pack()
 
-    root.mainLoop()
+    root.mainloop()
 """
 
+from ._core        import TclError
 from ._app         import Tk
-from ._frame       import Frame
+from ._frame       import Frame, LabelFrame
 from ._label       import Label
 from ._button      import Button
 from ._text        import Text
@@ -33,6 +34,8 @@ from ._spinbox     import Spinbox
 from ._notebook    import Notebook
 from ._combobox    import Combobox
 from ._scrollbar   import Scrollbar
+from ._misc        import Separator, Progressbar
+from ._events      import Event
 from . import ttk
 
 # ---------------------------------------------------------------------------
@@ -94,100 +97,197 @@ VERTICAL   = 'vertical'
 HEADINGS = 'headings'
 TREE     = 'tree'
 
+NO      = FALSE = OFF = 0
+YES     = TRUE  = ON  = 1
+BASELINE = 'baseline'
+INSIDE  = 'inside'
+OUTSIDE = 'outside'
+NUMERIC = 'numeric'
+UNITS   = 'units'
+PAGES   = 'pages'
+MOVETO  = 'moveto'
+SCROLL  = 'scroll'
+HIDDEN  = 'hidden'
+READONLY = 'readonly'
+DOTBOX  = 'dotbox'
+UNDERLINE = 'underline'
+ALL     = 'all'
+SEPARATOR = 'separator'
+COMMAND = 'command'
+CASCADE = 'cascade'
+CHECKBUTTON = 'checkbutton'
+RADIOBUTTON = 'radiobutton'
+
 # ---------------------------------------------------------------------------
 # StringVar / IntVar / BooleanVar / DoubleVar  – simple variable wrappers
 # ---------------------------------------------------------------------------
 
 class Variable:
-	"""Observable variable (mirrors tkinter.Variable)."""
+	"""Observable variable (mirrors tkinter.Variable).
+
+	trace_add(mode, cb) accepts 'write', 'read', 'unset' (or a list of
+	them) and returns a name for trace_remove(); the legacy trace('w', cb)
+	/ trace_variable / trace_vdelete API is supported too.  Callbacks are
+	called as cb(name, index, mode) like in tkinter.
+	"""
+
+	_count	= 0
+	_default = None
 
 	def __init__(self, master=None, value=None, name=None):
-		self._val   = value
-		self._name  = name
-		self._traces = []
+		Variable._count += 1
+		self._name   = name or f'PY_VAR{Variable._count}'
+		self._traces = []	# list of (cbname, modes, callback)
+		self._val    = self._default if value is None else self._convert(value)
+
+	def _convert(self, value):
+		return value
+
+	def _fire(self, mode):
+		for _, modes, cb in list(self._traces):
+			if mode in modes:
+				cb(self._name, '', mode)
 
 	def get(self):
+		if any('read' in modes for _, modes, _ in self._traces):
+			self._fire('read')
 		return self._val
 
 	def set(self, value):
-		self._val = value
-		for cb in self._traces:
-			try:
-				cb(self._name, '', 'write')
-			except Exception:
-				pass
+		self._val = self._convert(value)
+		self._fire('write')
+
+	initialize = set
+
+	_MODES = {'w': 'write', 'r': 'read', 'u': 'unset',
+		'write': 'write', 'read': 'read', 'unset': 'unset', 'array': 'write'}
 
 	def trace_add(self, mode, callback):
-		if mode == 'write':
-			self._traces.append(callback)
+		if isinstance(mode, str):
+			mode = mode.split() if ' ' in mode else [mode]
+		modes = set()
+		for m in mode:
+			for ch in ([m] if m in self._MODES else list(m)):
+				if ch in self._MODES:
+					modes.add(self._MODES[ch])
+		cbname = f'{id(callback)}{callback.__name__ if hasattr(callback, "__name__") else ""}{len(self._traces)}'
+		self._traces.append((cbname, modes, callback))
+		return cbname
+
+	def trace_remove(self, mode, cbname):
+		self._traces = [t for t in self._traces if t[0] != cbname]
+
+	def trace_info(self):
+		return [(tuple(sorted(m)), n) for n, m, _ in self._traces]
 
 	def trace_variable(self, mode, callback):
-		self.trace_add(mode, callback)
+		return self.trace_add(mode, callback)
 
 	trace = trace_variable
 
-	def trace_remove(self, mode, cbname):
-		pass
+	def trace_vdelete(self, mode, cbname):
+		self.trace_remove(mode, cbname)
 
-	def trace_info(self):
-		return []
+	def trace_vinfo(self):
+		return self.trace_info()
+
+	traceAdd	= trace_add
+	traceRemove	= trace_remove
+	traceInfo	= trace_info
 
 	def __str__(self):
-		return str(self._val)
+		return self._name
+
+	def __repr__(self):
+		return f'<{type(self).__name__} {self._name}={self._val!r}>'
 
 
 class StringVar(Variable):
-	def __init__(self, master=None, value='', name=None):
-		super().__init__(master, str(value) if value is not None else '', name)
+	_default = ''
+
+	def __init__(self, master=None, value=None, name=None):
+		super().__init__(master, value, name)
+
+	def _convert(self, value):
+		return '' if value is None else str(value)
 
 	def get(self):
-		return '' if self._val is None else str(self._val)
-
-	def set(self, value):
-		super().set(str(value))
+		v = super().get()
+		return '' if v is None else str(v)
 
 
 class IntVar(Variable):
-	def __init__(self, master=None, value=0, name=None):
-		super().__init__(master, int(value), name)
+	_default = 0
+
+	def __init__(self, master=None, value=None, name=None):
+		super().__init__(master, value, name)
+
+	def _convert(self, value):
+		if isinstance(value, str):
+			value = value.strip()
+			if value == '':
+				return 0
+			return int(float(value))
+		return int(value)
 
 	def get(self):
-		return 0 if self._val is None else int(self._val)
-
-	def set(self, value):
-		super().set(int(value))
+		v = super().get()
+		return 0 if v is None else int(v)
 
 
 class DoubleVar(Variable):
-	def __init__(self, master=None, value=0.0, name=None):
-		super().__init__(master, float(value), name)
+	_default = 0.0
+
+	def __init__(self, master=None, value=None, name=None):
+		super().__init__(master, value, name)
+
+	def _convert(self, value):
+		if isinstance(value, str) and value.strip() == '':
+			return 0.0
+		return float(value)
 
 	def get(self):
-		return 0.0 if self._val is None else float(self._val)
-
-	def set(self, value):
-		super().set(float(value))
+		v = super().get()
+		return 0.0 if v is None else float(v)
 
 
 class BooleanVar(Variable):
-	def __init__(self, master=None, value=False, name=None):
-		super().__init__(master, bool(value), name)
+	_default = False
+
+	def __init__(self, master=None, value=None, name=None):
+		super().__init__(master, value, name)
+
+	def _convert(self, value):
+		if isinstance(value, str):
+			return value.strip().lower() in ('1', 'true', 'yes', 'on')
+		return bool(value)
 
 	def get(self):
-		return bool(self._val)
+		return bool(super().get())
 
-	def set(self, value):
-		super().set(bool(value))
+
+class _setit:
+	"""Internal class used by OptionMenu menus (mirrors tkinter._setit)."""
+
+	def __init__(self, var, value, callback=None):
+		self.__value	= value
+		self.__var	= var
+		self.__callback	= callback
+
+	def __call__(self, *args):
+		self.__var.set(self.__value)
+		if self.__callback is not None:
+			self.__callback(self.__value, *args)
 
 
 __version__ = '0.1.0'
 
 __all__ = [
 	# Widgets
-	'Tk', 'Frame', 'Label', 'Button', 'Text', 'Listbox', 'Treeview',
-	'Entry', 'Checkbutton', 'Radiobutton', 'Menu', 'OptionMenu',
-	'Scale', 'Spinbox', 'Notebook', 'Combobox', 'Scrollbar',
-	'ttk',
+	'Tk', 'Frame', 'LabelFrame', 'Label', 'Button', 'Text', 'Listbox',
+	'Treeview', 'Entry', 'Checkbutton', 'Radiobutton', 'Menu', 'OptionMenu',
+	'Scale', 'Spinbox', 'Notebook', 'Combobox', 'Scrollbar', 'Separator',
+	'Progressbar', 'Event', 'TclError', 'ttk',
 	# Variables
 	'Variable', 'StringVar', 'IntVar', 'DoubleVar', 'BooleanVar',
 	# Direction / fill constants
@@ -206,4 +306,7 @@ __all__ = [
 	'HORIZONTAL', 'VERTICAL',
 	# Treeview show modes
 	'HEADINGS', 'TREE',
+	# Misc
+	'NO', 'YES', 'FALSE', 'TRUE', 'OFF', 'ON', 'UNITS', 'PAGES', 'MOVETO',
+	'SCROLL', 'HIDDEN', 'READONLY', 'ALL',
 ]

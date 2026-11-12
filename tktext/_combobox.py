@@ -1,94 +1,98 @@
 import curses
-from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad, _clip
-from ._events import (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT,
-	KEY_HOME, KEY_END, KEY_BACKSPACE, KEY_DC, KEY_ENTER, KEY_CR, KEY_ESC)
+from ._entry import Entry
+from ._core import _addStr, _fillRect, _drawBorder, _pad, _int
+from ._events import (KEY_UP, KEY_DOWN, KEY_HOME, KEY_END, KEY_PPAGE,
+	KEY_NPAGE, KEY_ENTER, KEY_ESC, KEY_SPACE, KEY_TAB,
+	B1_PRESS, B1_RELEASE, B1_CLICK, MOTION, isWheel)
 
 
-class Combobox(Widget):
-	"""Entry widget with a dropdown value list.  Mirrors ttk.Combobox."""
+class Combobox(Entry):
+	"""Entry widget with a dropdown value list.  Mirrors ttk.Combobox.
+
+	Editing, selection and the textvariable are inherited from Entry;
+	with state='readonly' the text can only be chosen from the list."""
+
+	_BUTTON = ' ▼ '
 
 	def __init__(self, parent=None, **kwargs):
 		super().__init__(parent)
 		self._opts.update({
-			'values':          (),
-			'textvariable':    None,
-			'justify':         'left',
-			'postcommand':     None,
-			'exportselection': True,
+			'values':		(),
+			'postcommand':		None,
+			'height':		10,
 		})
-		kwargs.setdefault('relief',      'sunken')
-		kwargs.setdefault('borderwidth', 1)
-		kwargs.setdefault('width',       15)
-		if kwargs:
-			self.configure(**kwargs)
-
-		tv           = self._opts.get('textvariable')
-		self._text   = str(tv.get()) if tv is not None else ''
-		self._cur    = len(self._text)
-		self._scrollX = 0
-		self._open   = False	# dropdown visible?
-		self._ddIdx  = 0	# highlighted row in dropdown
+		kwargs.setdefault('width', 15)
+		self._open     = False	# dropdown visible?
+		self._ddIdx    = 0	# highlighted row in dropdown
 		self._ddScroll = 0	# first visible row in dropdown
 		self._dropdown = None	# _ComboDropdown overlay while open
+		if kwargs:
+			self.configure(**kwargs)
 
 	# ------------------------------------------------------------------
 	# Public API
 	# ------------------------------------------------------------------
 
-	def get(self) -> str:
-		tv = self._opts.get('textvariable')
-		return tv.get() if tv is not None else self._text
-
-	def set(self, value: str):
-		self._text = str(value)
-		self._cur  = len(self._text)
-		tv = self._opts.get('textvariable')
-		if tv is not None:
-			tv.set(value)
+	def set(self, value):
+		"""Set the text (works also in readonly state)."""
+		self._setBuf(str(value))
+		self._cur = len(self._getBuf())
+		self._sel = None
 		self._scrollToCursor()
-		self._markDirty()
 
-	def current(self, idx: int = None):
+	def current(self, idx=None):
 		"""Get or set the current selection index in the values list."""
-		vals = list(self._opts.get('values') or [])
+		vals = self._values()
 		if idx is None:
-			try:
-				return vals.index(self.get())
-			except ValueError:
-				return -1
-		if 0 <= idx < len(vals):
-			self.set(str(vals[idx]))
+			cur = self.get()
+			return vals.index(cur) if cur in vals else -1
+		idx = int(idx)
+		if not 0 <= idx < len(vals):
+			raise IndexError(f'index {idx} out of range')
+		self.set(vals[idx])
+		return None
 
 	# ------------------------------------------------------------------
 	# Helpers
 	# ------------------------------------------------------------------
 
+	def _values(self):
+		vals = self._opts.get('values') or ()
+		if isinstance(vals, str):
+			vals = vals.split()
+		return [str(v) for v in vals]
+
 	def _visW(self) -> int:
-		bd = int(self._opts.get('borderwidth') or 0)
-		return max(1, self._w - 2*bd - 3)	# 3 = space + ▼ + space
+		return max(1, self._w - 2*self._border() - len(self._BUTTON))
 
-	def _ddMaxH(self) -> int:
-		return min(len(list(self._opts.get('values') or [])), 6)
+	def _ddRows(self) -> int:
+		return max(1, min(len(self._values()), _int(self._opts.get('height'), 10) or 10))
 
-	def _scrollToCursor(self):
-		visW = self._visW()
-		if self._cur < self._scrollX:
-			self._scrollX = self._cur
-		elif self._cur >= self._scrollX + visW:
-			self._scrollX = self._cur - visW + 1
+	def _preferredSize(self):
+		bd = self._cfgBorder()
+		ow = _int(self._opts.get('width'), 15) or 15
+		return (ow + 2*bd + len(self._BUTTON), 1 + 2*bd)
+
+	def _ensureDdVisible(self):
+		rows = self._ddRows()
+		if self._ddIdx < self._ddScroll:
+			self._ddScroll = self._ddIdx
+		elif self._ddIdx >= self._ddScroll + rows:
+			self._ddScroll = self._ddIdx - rows + 1
+		self._ddScroll = max(0, min(self._ddScroll, max(0, len(self._values()) - rows)))
 
 	def _openDropdown(self):
 		cmd = self._opts.get('postcommand')
 		if callable(cmd):
 			cmd()
-		vals = list(self._opts.get('values') or [])
+		vals = self._values()
 		if not vals:
 			return
-		cur          = self.current()
-		self._ddIdx  = max(0, cur)
-		self._ddScroll = max(0, self._ddIdx - self._ddMaxH() + 1)
-		self._open   = True
-		app          = self._getApp()
+		self._ddIdx    = max(0, self.current())
+		self._ddScroll = 0
+		self._ensureDdVisible()
+		self._open     = True
+		app            = self._getApp()
 		if app is not None:
 			self._dropdown = _ComboDropdown(self)
 			app._postedMenus.append(self._dropdown)
@@ -101,84 +105,51 @@ class Combobox(Widget):
 				app._postedMenus.remove(self._dropdown)
 		self._open     = False
 		self._dropdown = None
-		if selectIdx >= 0:
-			vals = list(self._opts.get('values') or [])
-			if 0 <= selectIdx < len(vals):
-				self.set(str(vals[selectIdx]))
-				self._dispatch('<<ComboboxSelected>>', _CBEvent(self))
+		vals = self._values()
+		if 0 <= selectIdx < len(vals):
+			self.set(vals[selectIdx])
+			self._fireVirtual('<<ComboboxSelected>>')
 		self._markDirty()
 
-	def _preferredSize(self):
-		bd = int(self._opts.get('borderwidth') or 0)
-		ow = int(self._opts.get('width') or 15)
-		return (ow + 2*bd + 3, 1 + 2*bd)
+	def _ddRect(self):
+		"""Return (x, y, w, h) of the dropdown overlay."""
+		ddH  = self._ddRows() + 2
+		app  = self._getApp()
+		scrH = app._h if app else 24
+		below = self._y + self._h
+		ddY  = below if below + ddH <= scrH or self._y - ddH < 0 else self._y - ddH
+		return (self._x, ddY, self._w, ddH)
 
 	# ------------------------------------------------------------------
 	# Rendering (widget body only; dropdown is rendered as an overlay)
 	# ------------------------------------------------------------------
 
 	def render(self, scr):
-		if self._w <= 0 or self._h <= 0:
+		if not self._isMapped():
 			return
-		bd   = int(self._opts.get('borderwidth') or 0)
-		attr = self._getAttr()
-		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
-		if bd > 0:
-			_drawBorder(scr, self._y, self._x, self._h, self._w,
-				self._opts.get('relief', 'sunken'), attr)
-
-		visW = self._visW()
-		by   = self._y + bd + (self._h - 2*bd) // 2
-		bx   = self._x + bd
-		tv   = self._opts.get('textvariable')
-		text = tv.get() if tv is not None else self._text
-		vis  = text[self._scrollX:self._scrollX + visW]
-		_addStr(scr, by, bx, vis.ljust(visW), attr)
-
-		btnX  = self._x + self._w - bd - 3
-		battr = attr | curses.A_REVERSE
-		_addStr(scr, by, btnX, ' ▼ ', battr)
+		super().render(scr)
+		bd    = self._border()
+		by    = self._y + bd + (self._h - 2*bd - 1) // 2
+		battr = self._getAttr() | curses.A_REVERSE
+		_addStr(scr, by, self._x + self._w - bd - len(self._BUTTON), self._BUTTON, battr)
 
 	def _renderDropdown(self, scr):
-		"""Render the dropdown list overlay (called by _ComboDropdown)."""
-		vals  = list(self._opts.get('values') or [])
-		ddH   = self._ddMaxH() + 2	# +2 for borders
-		ddW   = self._w
-		ddX   = self._x
-		app   = self._getApp()
-		scrH  = app._h if app else 24
-		ddY   = (self._y + self._h if self._y + self._h + ddH <= scrH
-			else max(0, self._y - ddH))
-
+		vals = self._values()
+		ddX, ddY, ddW, ddH = self._ddRect()
 		lattr = self._getAttr()
-		sattr = self._getAttr() | curses.A_REVERSE
+		sattr = lattr | curses.A_REVERSE
 		_fillRect(scr, ddY, ddX, ddH, ddW, attr=lattr)
 		_drawBorder(scr, ddY, ddX, ddH, ddW, 'single', lattr)
-		inner = ddH - 2
-		for i in range(inner):
+		rows = ddH - 2
+		for i in range(rows):
 			idx = self._ddScroll + i
 			if idx >= len(vals):
 				break
-			txt   = _pad(str(vals[idx]), ddW - 2)
-			iattr = sattr if idx == self._ddIdx else lattr
-			_addStr(scr, ddY + 1 + i, ddX + 1, txt, iattr)
-
-	def _ddRect(self):
-		"""Return (x, y, w, h) of the dropdown overlay."""
-		ddH  = self._ddMaxH() + 2
-		ddW  = self._w
-		ddX  = self._x
-		app  = self._getApp()
-		scrH = app._h if app else 24
-		ddY  = (self._y + self._h if self._y + self._h + ddH <= scrH
-			else max(0, self._y - ddH))
-		return (ddX, ddY, ddW, ddH)
-
-	def _cursorPos(self):
-		bd = int(self._opts.get('borderwidth') or 0)
-		cy = self._y + bd + (self._h - 2*bd) // 2
-		cx = self._x + bd + (self._cur - self._scrollX)
-		return (cy, cx)
+			_addStr(scr, ddY + 1 + i, ddX + 1, _pad(vals[idx], ddW - 2),
+				sattr if idx == self._ddIdx else lattr)
+		if len(vals) > rows:
+			thumb = int(self._ddScroll * rows / len(vals))
+			_addStr(scr, ddY + 1 + thumb, ddX + ddW - 1, '█', lattr)
 
 	# ------------------------------------------------------------------
 	# Input
@@ -187,108 +158,94 @@ class Combobox(Widget):
 	def _isFocusable(self):
 		return self._opts.get('state', 'normal') in ('normal', 'readonly')
 
-	def _handleDropdownMouse(self, mx, my, bstate):
-		"""Called by _ComboDropdown when a click lands in the dropdown."""
-		if not (bstate & (curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED)):
-			return False
-		ddX, ddY, ddW, ddH = self._ddRect()
-		row = my - ddY - 1
-		if 0 <= row < ddH - 2:
-			self._closeDropdown(self._ddScroll + row)
-		else:
+	def _dropdownKey(self, key):
+		n = len(self._values())
+		rows = self._ddRows()
+		if key == KEY_DOWN:
+			self._ddIdx = min(n - 1, self._ddIdx + 1)
+		elif key == KEY_UP:
+			self._ddIdx = max(0, self._ddIdx - 1)
+		elif key == KEY_NPAGE:
+			self._ddIdx = min(n - 1, self._ddIdx + rows)
+		elif key == KEY_PPAGE:
+			self._ddIdx = max(0, self._ddIdx - rows)
+		elif key == KEY_HOME:
+			self._ddIdx = 0
+		elif key == KEY_END:
+			self._ddIdx = n - 1
+		elif key in (KEY_ENTER, KEY_SPACE, KEY_TAB):
+			self._closeDropdown(self._ddIdx)
+			return True
+		elif key == KEY_ESC:
 			self._closeDropdown()
+			return True
+		elif isinstance(key, int) and 32 < key < 127:
+			ch   = chr(key).lower()
+			vals = self._values()
+			for j in list(range(self._ddIdx + 1, n)) + list(range(0, self._ddIdx + 1)):
+				if vals[j][:1].lower() == ch:
+					self._ddIdx = j
+					break
+		self._ensureDdVisible()
+		self._markDirty()
 		return True
 
 	def _handleKey(self, key):
 		if self._open:
-			vals = list(self._opts.get('values') or [])
-			n    = len(vals)
-			vis  = self._ddMaxH()
-			if key == KEY_DOWN:
-				self._ddIdx = min(n - 1, self._ddIdx + 1)
-				if self._ddIdx >= self._ddScroll + vis:
-					self._ddScroll += 1
-			elif key == KEY_UP:
-				self._ddIdx = max(0, self._ddIdx - 1)
-				if self._ddIdx < self._ddScroll:
-					self._ddScroll -= 1
-			elif key in (KEY_ENTER, KEY_CR):
-				self._closeDropdown(self._ddIdx)
-			elif key == KEY_ESC:
-				self._closeDropdown()
-			self._markDirty()
-			return True
-
-		if key == KEY_DOWN:
-			vals = list(self._opts.get('values') or [])
-			if self._opts.get('state') == 'readonly':
-				self._openDropdown()
-			elif vals:
-				cur = self.current()
-				if cur < len(vals) - 1:
-					self.set(str(vals[cur + 1]))
-					self._dispatch('<<ComboboxSelected>>', _CBEvent(self))
+			return self._dropdownKey(key)
+		state = self._opts.get('state', 'normal')
+		if state == 'disabled':
+			return False
+		if key == KEY_DOWN or (state == 'readonly' and key in (KEY_ENTER, KEY_SPACE)):
+			self._openDropdown()
 			return True
 		if key == KEY_UP:
-			vals = list(self._opts.get('values') or [])
-			if vals:
-				cur = self.current()
-				if cur > 0:
-					self.set(str(vals[cur - 1]))
-					self._dispatch('<<ComboboxSelected>>', _CBEvent(self))
 			return True
+		return super()._handleKey(key)
 
-		if self._opts.get('state') == 'readonly':
-			return super()._handleKey(key)
-
-		# Text editing
-		tv   = self._opts.get('textvariable')
-		text = self._text
-		c    = self._cur
-		if key == KEY_LEFT:
-			self._cur = max(0, c - 1)
-		elif key == KEY_RIGHT:
-			self._cur = min(len(text), c + 1)
-		elif key == KEY_HOME:
-			self._cur = 0
-		elif key == KEY_END:
-			self._cur = len(text)
-		elif key in (KEY_BACKSPACE, 127):
-			if c > 0:
-				self._text = text[:c-1] + text[c:]
-				self._cur -= 1
-				if tv: tv.set(self._text)
-		elif key == KEY_DC:
-			if c < len(text):
-				self._text = text[:c] + text[c+1:]
-				if tv: tv.set(self._text)
-		elif 32 <= key <= 126:
-			self._text = text[:c] + chr(key) + text[c:]
-			self._cur += 1
-			if tv: tv.set(self._text)
-		else:
-			return super()._handleKey(key)
-		self._scrollToCursor()
+	def _handleDropdownMouse(self, mx, my, bstate):
+		"""Called by _ComboDropdown for events inside the dropdown."""
+		wheel = isWheel(bstate)
+		if wheel:
+			self._ddScroll += 3 * wheel
+			rows = self._ddRows()
+			self._ddScroll = max(0, min(self._ddScroll, max(0, len(self._values()) - rows)))
+			self._markDirty()
+			return True
+		_, ddY, _, ddH = self._ddRect()
+		row = my - ddY - 1
+		if 0 <= row < ddH - 2 and self._ddScroll + row < len(self._values()):
+			self._ddIdx = self._ddScroll + row
+			if bstate & (B1_RELEASE | B1_CLICK):
+				self._closeDropdown(self._ddIdx)
 		self._markDirty()
 		return True
 
 	def _handleMouse(self, mx, my, bstate):
-		if not (bstate & (curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED)):
+		state = self._opts.get('state', 'normal')
+		if state == 'disabled':
 			return False
-		bd   = int(self._opts.get('borderwidth') or 0)
-		btnX = self._x + self._w - bd - 3
-		if mx >= btnX:
+		wheel = isWheel(bstate)
+		if wheel and not self._open:
+			vals = self._values()
+			if vals:
+				cur = self.current()
+				nxt = max(0, min(len(vals) - 1, cur + wheel))
+				if nxt != cur:
+					self.set(vals[nxt])
+					self._fireVirtual('<<ComboboxSelected>>')
+			return True
+		pressed = bool(bstate & (B1_PRESS | B1_CLICK)) and not (bstate & MOTION)
+		btnX    = self._x + self._w - self._border() - len(self._BUTTON)
+		if pressed and not self._mouseDown and (mx >= btnX or state == 'readonly'):
 			if self._open:
 				self._closeDropdown()
 			else:
 				self._openDropdown()
 			return True
-		if self._opts.get('state') != 'readonly':
-			bx        = self._x + bd
-			self._cur = max(0, min(len(self._text), self._scrollX + (mx - bx)))
-			self._scrollToCursor()
-			self._markDirty()
-		return True
+		if state == 'readonly':
+			return True
+		return super()._handleMouse(mx, my, bstate)
 
 
 # ---------------------------------------------------------------------------
@@ -296,46 +253,35 @@ class Combobox(Widget):
 # ---------------------------------------------------------------------------
 
 class _ComboDropdown:
-	"""Thin proxy posted to _postedMenus to catch clicks in the dropdown."""
+	"""Thin proxy posted to _postedMenus to catch input for the dropdown."""
 
 	def __init__(self, cb: Combobox):
-		self._cb = cb
+		self._cb     = cb
+		self._posted = True
 
 	def _menuWidth(self) -> int:
-		return self._cb._w
+		return self._cb._ddRect()[2]
 
 	def _menuHeight(self) -> int:
-		return self._cb._ddMaxH() + 2
+		return self._cb._ddRect()[3]
 
 	@property
 	def _postX(self) -> int:
-		return self._cb._x
+		return self._cb._ddRect()[0]
 
 	@property
 	def _postY(self) -> int:
-		app  = self._cb._getApp()
-		scrH = app._h if app else 24
-		ddH  = self._menuHeight()
-		return (self._cb._y + self._cb._h
-			if self._cb._y + self._cb._h + ddH <= scrH
-			else max(0, self._cb._y - ddH))
+		return self._cb._ddRect()[1]
 
 	def render(self, scr):
 		self._cb._renderDropdown(scr)
 
 	def unpost(self):
+		self._posted = False
 		self._cb._closeDropdown()
 
 	def _handleMouse(self, mx, my, bstate):
 		return self._cb._handleDropdownMouse(mx, my, bstate)
 
 	def _handleKey(self, key):
-		return self._cb._handleKey(key)
-
-
-class _CBEvent:
-	def __init__(self, widget):
-		self.widget  = widget
-		self.type    = 'ComboboxSelected'
-		self.char    = ''
-		self.keysym  = ''
+		return self._cb._dropdownKey(key)

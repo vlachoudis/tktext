@@ -1,17 +1,4 @@
-from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad
-
-
-_ANCHOR_MAP = {
-	'nw': ('left',  'top'),
-	'n':  ('center','top'),
-	'ne': ('right', 'top'),
-	'w':  ('left',  'mid'),
-	'center': ('center', 'mid'),
-	'e':  ('right', 'mid'),
-	'sw': ('left',  'bot'),
-	's':  ('center','bot'),
-	'se': ('right', 'bot'),
-}
+from ._core import Widget, _fillRect, _drawBorder, _drawText, _int
 
 
 class Label(Widget):
@@ -23,11 +10,13 @@ class Label(Widget):
 			'text':		'',
 			'textvariable':	None,
 			'image':	None,
-			'anchor':	'w',
-			'justify':	'left',
+			'anchor':	'center',
+			'justify':	'center',
 			'wraplength':	0,
 			'font':		None,
 			'compound':	'none',
+			'underline':	-1,
+			'takefocus':	False,
 		})
 		if kwargs:
 			self.configure(**kwargs)
@@ -38,65 +27,56 @@ class Label(Widget):
 		tv = self._opts.get('textvariable')
 		if tv is not None and hasattr(tv, 'get'):
 			return str(tv.get())
-		return str(self._opts.get('text') or '')
+		text = self._opts.get('text')
+		return '' if text is None else str(text)
+
+	def _wrappedText(self):
+		text = self._getText()
+		wl   = _int(self._opts.get('wraplength'))
+		if wl <= 0:
+			return text
+		import textwrap
+		lines = []
+		for para in text.split('\n'):
+			lines.extend(textwrap.wrap(para, wl) or [''])
+		return '\n'.join(lines)
 
 	def _preferredSize(self):
-		bd  = int(self._opts.get('borderwidth') or 0)
-		ow  = int(self._opts.get('width') or 0)
-		oh  = int(self._opts.get('height') or 0)
-		padx = int(self._opts.get('padx') or 0)
-		pady = int(self._opts.get('pady') or 0)
-		text = self._getText()
-		lines = text.split('\n') if text else ['']
+		bd    = self._cfgBorder()
+		ow    = _int(self._opts.get('width'))
+		oh    = _int(self._opts.get('height'))
+		padx  = _int(self._opts.get('padx'))
+		pady  = _int(self._opts.get('pady'))
+		lines = self._wrappedText().split('\n')
 		textW = max(len(l) for l in lines)
 		textH = len(lines)
-		w = max(ow, textW) + 2*bd + 2*padx
-		h = max(oh, textH) + 2*bd + 2*pady
+		w = (ow if ow > 0 else textW) + 2*bd + 2*padx
+		h = (oh if oh > 0 else textH) + 2*bd + 2*pady
 		return (max(w, 1), max(h, 1))
 
-	def render(self, scr):
-		if self._w <= 0 or self._h <= 0:
-			return
-		bd    = int(self._opts.get('borderwidth') or 0)
-		padx  = int(self._opts.get('padx') or 0)
-		pady  = int(self._opts.get('pady') or 0)
-		attr  = self._getAttr()
-		text  = self._getText()
+	def _contentAttr(self):
+		if self._opts.get('state') == 'disabled':
+			return self._getAttr(fg=self._opts.get('disabledforeground') or 'gray')
+		return self._getAttr()
 
-		# Background
+	def render(self, scr):
+		if not self._isMapped():
+			return
+		bd    = self._border()
+		padx  = _int(self._opts.get('padx'))
+		pady  = _int(self._opts.get('pady'))
+		attr  = self._contentAttr()
+
 		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
 
-		# Border
 		relief = self._opts.get('relief', 'flat')
 		if bd > 0 and relief != 'flat':
 			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
 
-		# Content area
-		cx  = self._x + bd + padx
-		cy  = self._y + bd + pady
-		cw  = max(1, self._w - 2*bd - 2*padx)
-		ch  = max(1, self._h - 2*bd - 2*pady)
-
-		lines = text.split('\n')
-		anchor = self._opts.get('anchor', 'w') or 'w'
-		halign, valign = _ANCHOR_MAP.get(anchor, ('left', 'mid'))
-
-		# Vertical offset
-		if valign == 'top':
-			startRow = 0
-		elif valign == 'bot':
-			startRow = max(0, ch - len(lines))
-		else:
-			startRow = max(0, (ch - len(lines)) // 2)
-
-		justify = self._opts.get('justify', 'left') or 'left'
-		jalign = justify if justify in ('left', 'right', 'center') else 'left'
-
-		for i, line in enumerate(lines):
-			row = cy + startRow + i
-			if row < self._y or row >= self._y + self._h:
-				continue
-			_addStr(scr, row, cx, _pad(line, cw, jalign), attr)
-
-	def _isFocusable(self):
-		return False
+		_drawText(scr,
+			self._x + bd + padx, self._y + bd + pady,
+			self._w - 2*bd - 2*padx, self._h - 2*bd - 2*pady,
+			self._wrappedText(),
+			self._opts.get('anchor') or 'center',
+			self._opts.get('justify') or 'center',
+			attr)

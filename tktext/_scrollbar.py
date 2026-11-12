@@ -1,73 +1,131 @@
-import curses
-from ._core import Widget, _addStr, _fillRect
+from ._core import Widget, _addStr
+from ._events import B1_PRESS, B1_RELEASE, B1_CLICK, MOTION, isWheel
 
 
 class Scrollbar(Widget):
-	"""Dummy Scrollbar — API-compatible with tkinter.Scrollbar.
+	"""Scrollbar widget.  Mirrors tkinter.Scrollbar.
 
-	Listbox, Text and Treeview have built-in scrollbars; this widget
-	exists so code that creates a Scrollbar next to those widgets does
-	not crash.  The visual indicator still shows the current thumb
-	position reported via set().
+	Connect it like in tkinter::
+
+		sb = Scrollbar(frame, command=lb.yview)
+		lb.configure(yscrollcommand=sb.set)
+
+	Clicking the arrows scrolls by one unit, clicking the trough scrolls
+	by a page and dragging the thumb calls command('moveto', fraction).
 	"""
 
 	def __init__(self, parent=None, **kwargs):
 		super().__init__(parent)
 		self._opts.update({
-			'orient':  'vertical',
-			'command': None,
+			'orient':	'vertical',
+			'command':	None,
+			'takefocus':	False,
 		})
 		kwargs.setdefault('relief',      'flat')
 		kwargs.setdefault('borderwidth', 0)
 		if kwargs:
 			self.configure(**kwargs)
-		self._first = 0.0
-		self._last  = 1.0
+		self._first	= 0.0
+		self._last	= 1.0
+		self._drag	= None	# (anchorPos, anchorFirst) while dragging
 
 	# ------------------------------------------------------------------
 	# Public API
 	# ------------------------------------------------------------------
 
-	def set(self, first: float, last: float):
+	def set(self, first, last):
 		"""Called by the linked widget to report its scroll position."""
-		self._first = float(first)
-		self._last  = float(last)
-		self._markDirty()
+		first = max(0.0, min(1.0, float(first)))
+		last  = max(first, min(1.0, float(last)))
+		if (first, last) != (self._first, self._last):
+			self._first = first
+			self._last  = last
+			self._markDirty()
 
 	def get(self) -> tuple:
 		return (self._first, self._last)
 
 	# ------------------------------------------------------------------
 
-	def _isFocusable(self):
-		return False
+	def _vertical(self) -> bool:
+		return str(self._opts.get('orient', 'vertical')).startswith('v')
 
 	def _preferredSize(self):
-		orient = self._opts.get('orient', 'vertical')
-		if orient == 'horizontal':
-			return (int(self._opts.get('width') or 10), 1)
-		return (1, int(self._opts.get('height') or 10))
+		if self._vertical():
+			return (1, max(3, int(self._opts.get('height') or 3)))
+		return (max(3, int(self._opts.get('width') or 3)), 1)
+
+	def _length(self) -> int:
+		return self._h if self._vertical() else self._w
+
+	def _thumb(self):
+		"""Return (start, end) of the thumb in trough cells."""
+		trough = max(1, self._length() - 2)
+		start  = int(round(self._first * trough))
+		end    = max(start + 1, int(round(self._last * trough)))
+		return start, min(end, trough)
 
 	def render(self, scr):
-		if self._w <= 0 or self._h <= 0:
+		if not self._isMapped():
 			return
 		attr   = self._getAttr()
-		orient = self._opts.get('orient', 'vertical')
-
-		if orient == 'vertical':
-			total     = self._h
-			thumbStart = int(self._first * total)
-			thumbEnd   = max(thumbStart + 1, int(self._last * total))
-			for i in range(total):
-				ch = '#' if thumbStart <= i < thumbEnd else '|'
-				try:
-					scr.addch(self._y + i, self._x, ch, attr)
-				except curses.error:
-					pass
+		n      = self._length()
+		if n < 3:
+			cells = ['#'] * n
 		else:
-			total     = self._w
-			thumbStart = int(self._first * total)
-			thumbEnd   = max(thumbStart + 1, int(self._last * total))
-			row = ''.join('#' if thumbStart <= i < thumbEnd else '-'
-				for i in range(total))
-			_addStr(scr, self._y, self._x, row, attr)
+			ts, te = self._thumb()
+			trough = '│' if self._vertical() else '─'
+			cells  = ['▲' if self._vertical() else '◀']
+			cells += ['█' if ts <= i < te else trough for i in range(n - 2)]
+			cells += ['▼' if self._vertical() else '▶']
+		if self._vertical():
+			for i, ch in enumerate(cells):
+				_addStr(scr, self._y + i, self._x, ch, attr)
+		else:
+			_addStr(scr, self._y, self._x, ''.join(cells), attr)
+
+	# ------------------------------------------------------------------
+
+	def _command(self, *args):
+		cmd = self._opts.get('command')
+		if callable(cmd):
+			cmd(*args)
+
+	def _handleMouse(self, mx, my, bstate):
+		wheel = isWheel(bstate)
+		if wheel:
+			self._command('scroll', 3 * wheel, 'units')
+			return True
+		n   = self._length()
+		pos = (my - self._y) if self._vertical() else (mx - self._x)
+		press   = bool(bstate & B1_PRESS) and not (bstate & MOTION)
+		release = bool(bstate & (B1_RELEASE | B1_CLICK))
+		motion  = bool(bstate & MOTION) or (bstate & B1_PRESS and self._drag)
+
+		if self._drag is not None and (motion or release):
+			anchorPos, anchorFirst = self._drag
+			trough = max(1, n - 2)
+			frac   = anchorFirst + (pos - anchorPos) / trough
+			self._command('moveto', max(0.0, min(1.0, frac)))
+			if release:
+				self._drag = None
+			return True
+
+		if not (press or bstate & B1_CLICK):
+			return False
+		if n < 3:
+			return True
+		if pos <= 0:
+			self._command('scroll', -1, 'units')
+		elif pos >= n - 1:
+			self._command('scroll', 1, 'units')
+		else:
+			ts, te = self._thumb()
+			cell   = pos - 1
+			if cell < ts:
+				self._command('scroll', -1, 'pages')
+			elif cell >= te:
+				self._command('scroll', 1, 'pages')
+			elif press:
+				self._drag = (pos, self._first)
+		return True

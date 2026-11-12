@@ -3,37 +3,48 @@ from ._dialog import _getApp, _FileDialog
 
 
 def _run(title, mode, initialdir=None, initialfile='',
-		filetypes=None, defaultextension='', multiple=False, **kw):
-	app = _getApp()
+		filetypes=None, defaultextension='', multiple=False, parent=None, **kw):
+	app = _getApp(parent)
 	if app is None:
-		return '' if not multiple else []
+		return '' if not multiple else ()
 	result = _FileDialog(app, title, mode=mode,
-		initialdir=initialdir, initialfile=initialfile,
-		filetypes=filetypes, defaultextension=defaultextension,
+		initialdir=initialdir, initialfile=initialfile or '',
+		filetypes=filetypes, defaultextension=defaultextension or '',
 		multiple=multiple).run()
 	if multiple:
-		return [result] if result else []
+		return (result,) if result else ()
 	return result or ''
 
 
 def askopenfilename(title='Open', initialdir=None, initialfile='',
 		filetypes=None, defaultextension='', parent=None, **kw) -> str:
 	return _run(title, 'open', initialdir=initialdir, initialfile=initialfile,
-		filetypes=filetypes, defaultextension=defaultextension)
+		filetypes=filetypes, defaultextension=defaultextension, parent=parent)
 
 
 def asksaveasfilename(title='Save As', initialdir=None, initialfile='',
 		filetypes=None, defaultextension='', parent=None, **kw) -> str:
 	return _run(title, 'save', initialdir=initialdir, initialfile=initialfile,
-		filetypes=filetypes, defaultextension=defaultextension)
+		filetypes=filetypes, defaultextension=defaultextension, parent=parent)
 
 
 def askopenfilenames(title='Open', initialdir=None,
-		filetypes=None, parent=None, **kw) -> list:
+		filetypes=None, parent=None, **kw) -> tuple:
 	return _run(title, 'open', initialdir=initialdir,
-		filetypes=filetypes, multiple=True)
+		filetypes=filetypes, multiple=True, parent=parent)
 
 
 def askdirectory(title='Choose Directory', initialdir=None,
 		parent=None, **kw) -> str:
-	return _run(title, 'dir', initialdir=initialdir)
+	return _run(title, 'dir', initialdir=initialdir, parent=parent)
+
+
+def askopenfile(mode='r', **kw):
+	"""Ask for a file name and return the opened file (or None)."""
+	fn = askopenfilename(**kw)
+	return open(fn, mode) if fn else None
+
+
+def asksaveasfile(mode='w', **kw):
+	fn = asksaveasfilename(**kw)
+	return open(fn, mode) if fn else None

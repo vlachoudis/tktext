@@ -1,65 +1,62 @@
 import curses
-from ._core import Widget, _addStr, _fillRect, _drawBorder, _clip
-from ._events import (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT,
-	KEY_HOME, KEY_END, KEY_BACKSPACE, KEY_DC, KEY_ENTER, KEY_CR)
+from ._entry import Entry
+from ._core import _addStr, _int
+from ._events import (KEY_UP, KEY_DOWN, KEY_PPAGE, KEY_NPAGE,
+	B1_PRESS, B1_CLICK, MOTION, isWheel)
 
 
-class Spinbox(Widget):
+def _float(v, default):
+	try:
+		return float(v)
+	except (TypeError, ValueError):
+		return default
+
+
+class Spinbox(Entry):
 	"""Single-line entry with ▲▼ increment/decrement buttons.
-	Mirrors tkinter.Spinbox / tkinter.ttk.Spinbox."""
+	Mirrors tkinter.Spinbox / tkinter.ttk.Spinbox.
+
+	Editing, selection and the textvariable are inherited from Entry."""
+
+	_BUTTONS = ' ▲▼'
 
 	def __init__(self, parent=None, **kwargs):
 		super().__init__(parent)
 		self._opts.update({
-			'from_':        0.0,
-			'to':           float('inf'),
-			'increment':    1.0,
-			'values':       (),
-			'textvariable': None,
-			'command':      None,
-			'wrap':         False,
-			'format':       '',
-			'justify':      'left',
-			'show':         '',
-			'validate':     'none',
-			'validatecommand': None,
+			'from_':		0.0,
+			'to':			0.0,
+			'increment':		1.0,
+			'values':		(),
+			'command':		None,
+			'wrap':			False,
+			'format':		'',
+			'validate':		'none',
+			'validatecommand':	None,
+			'buttonbackground':	'',
 		})
-		kwargs.setdefault('relief',      'sunken')
-		kwargs.setdefault('borderwidth', 1)
-		kwargs.setdefault('width',       10)
+		kwargs.setdefault('width', 10)
 		if kwargs:
 			self.configure(**kwargs)
 
-		vals = self._opts.get('values')
-		tv   = self._opts.get('textvariable')
-		if tv is not None:
-			initText = str(tv.get())
-		elif vals:
-			initText = str(list(vals)[0])
-		else:
-			initText = str(int(self._opts.get('from_') or 0))
-
-		self._text   = initText
-		self._cur    = len(self._text)
-		self._scrollX = 0
-		self._valIdx = 0
+		tv = self._opts.get('textvariable')
+		if tv is None or str(tv.get()) == '':
+			vals = self._values()
+			if vals:
+				init = vals[0]
+			else:
+				init = self._format(_float(self._opts.get('from_'), 0.0))
+			self._setBuf(init)
+		self._cur = len(self._getBuf())
 
 	# ------------------------------------------------------------------
-	# Public API
+	# Public API (Entry provides get/insert/delete/icursor/selection…)
 	# ------------------------------------------------------------------
 
-	def get(self) -> str:
-		tv = self._opts.get('textvariable')
-		return tv.get() if tv is not None else self._text
-
-	def set(self, value: str):
-		self._text = str(value)
-		self._cur  = len(self._text)
-		tv = self._opts.get('textvariable')
-		if tv is not None:
-			tv.set(value)
+	def set(self, value):
+		"""Set the text (ttk.Spinbox API)."""
+		self._setBuf(str(value))
+		self._cur = len(self._getBuf())
 		self._scrollToCursor()
-		self._markDirty()
 
 	def invoke(self, element: str = 'buttonup'):
 		"""Programmatically press the up or down button."""
@@ -69,155 +66,108 @@ class Spinbox(Widget):
 	# Helpers
 	# ------------------------------------------------------------------
 
-	def _increment(self, direction: int):
-		vals = list(self._opts.get('values') or [])
-		if vals:
-			n           = len(vals)
+	def _values(self):
+		vals = self._opts.get('values') or ()
+		if isinstance(vals, str):
+			vals = vals.split()
+		return [str(v) for v in vals]
+
+	def _format(self, v):
+		fmt = self._opts.get('format') or ''
+		if fmt:
 			try:
-				cur = vals.index(self.get())
-			except ValueError:
-				cur = 0
-			nxt = cur + direction
+				return fmt % v
+			except (TypeError, ValueError):
+				pass
+		inc = _float(self._opts.get('increment'), 1.0)
+		if float(v).is_integer() and float(inc).is_integer():
+			return str(int(v))
+		return f'{v:g}'
+
+	def _increment(self, direction: int):
+		vals = self._values()
+		if vals:
+			n = len(vals)
+			cur = self.get()
+			idx = vals.index(cur) if cur in vals else (-1 if direction > 0 else n)
+			nxt = idx + direction
 			if self._opts.get('wrap'):
 				nxt %= n
 			else:
 				nxt = max(0, min(n - 1, nxt))
-			self.set(str(vals[nxt]))
+			self.set(vals[nxt])
 		else:
-			try:
-				v = float(self.get())
-			except ValueError:
-				v = float(self._opts.get('from_') or 0)
-			inc = float(self._opts.get('increment') or 1)
+			lo  = _float(self._opts.get('from_'), 0.0)
+			hi  = _float(self._opts.get('to'), 0.0)
+			inc = _float(self._opts.get('increment'), 1.0) or 1.0
+			v   = _float(self.get(), lo)
 			v  += direction * inc
-			lo  = float(self._opts.get('from_') if self._opts.get('from_') is not None else float('-inf'))
-			hi  = float(self._opts.get('to')    if self._opts.get('to')    is not None else float('inf'))
-			if self._opts.get('wrap'):
-				if v > hi:   v = lo
-				elif v < lo: v = hi
-			else:
-				v = max(lo, min(hi, v))
-			fmt = self._opts.get('format') or ''
-			self.set(fmt % v if fmt else f'{v:g}')
+			if hi > lo:
+				if self._opts.get('wrap'):
+					if v > hi:
+						v = lo
+					elif v < lo:
+						v = hi
+				else:
+					v = max(lo, min(hi, v))
+			self.set(self._format(v))
+		self._fireVirtual('<<Increment>>' if direction > 0 else '<<Decrement>>')
 		cmd = self._opts.get('command')
 		if callable(cmd):
 			cmd()
 
 	def _visW(self) -> int:
-		bd = int(self._opts.get('borderwidth') or 0)
-		return max(1, self._w - 2*bd - 3)  # 3 for ' ▲▼'
-
-	def _scrollToCursor(self):
-		visW = self._visW()
-		if self._cur < self._scrollX:
-			self._scrollX = self._cur
-		elif self._cur >= self._scrollX + visW:
-			self._scrollX = self._cur - visW + 1
+		return max(1, self._w - 2*self._border() - len(self._BUTTONS))
 
 	def _preferredSize(self):
-		bd = int(self._opts.get('borderwidth') or 0)
-		ow = int(self._opts.get('width') or 10)
-		return (ow + 2*bd + 3, 1 + 2*bd)
+		bd = self._cfgBorder()
+		ow = _int(self._opts.get('width'), 10) or 10
+		return (ow + 2*bd + len(self._BUTTONS), 1 + 2*bd)
+
+	def _buttonX(self) -> int:
+		return self._x + self._w - self._border() - len(self._BUTTONS)
 
 	# ------------------------------------------------------------------
 	# Rendering
 	# ------------------------------------------------------------------
 
 	def render(self, scr):
-		if self._w <= 0 or self._h <= 0:
+		if not self._isMapped():
 			return
-		bd    = int(self._opts.get('borderwidth') or 0)
+		super().render(scr)
+		bd    = self._border()
 		attr  = self._getAttr()
-		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
-		if bd > 0:
-			_drawBorder(scr, self._y, self._x, self._h, self._w,
-				self._opts.get('relief', 'sunken'), attr)
-
-		visW = self._visW()
-		by   = self._y + bd + (self._h - 2*bd) // 2
-		bx   = self._x + bd
-
-		tv   = self._opts.get('textvariable')
-		text = tv.get() if tv is not None else self._text
-		show = self._opts.get('show') or ''
-		disp = (show * len(text)) if show else text
-		vis  = disp[self._scrollX:self._scrollX + visW]
-		_addStr(scr, by, bx, vis.ljust(visW), attr)
-
-		btnX  = self._x + self._w - bd - 3
+		by    = self._y + bd + (self._h - 2*bd - 1) // 2
 		battr = attr | (curses.A_REVERSE if self._focused else 0)
-		_addStr(scr, by, btnX, ' ▲▼', battr)
-
-	def _cursorPos(self):
-		bd = int(self._opts.get('borderwidth') or 0)
-		cy = self._y + bd + (self._h - 2*bd) // 2
-		cx = self._x + bd + (self._cur - self._scrollX)
-		return (cy, cx)
+		_addStr(scr, by, self._buttonX(), self._BUTTONS, battr)
 
 	# ------------------------------------------------------------------
 	# Input
 	# ------------------------------------------------------------------
 
-	def _isFocusable(self):
-		return self._opts.get('state', 'normal') == 'normal'
-
 	def _handleKey(self, key):
 		if self._opts.get('state') == 'disabled':
 			return False
-		if key == KEY_UP:
+		if key in (KEY_UP, KEY_PPAGE):
 			self._increment(+1)
 			return True
-		if key == KEY_DOWN:
+		if key in (KEY_DOWN, KEY_NPAGE):
 			self._increment(-1)
 			return True
-		if key in (KEY_ENTER, KEY_CR):
-			cmd = self._opts.get('command')
-			if callable(cmd):
-				cmd()
-			self._dispatch('<Return>', type('E', (), {'widget': self, 'keysym': 'Return', 'char': '', 'type': 'KeyPress'})())
-			return True
-
-		tv   = self._opts.get('textvariable')
-		text = self._text
-		c    = self._cur
-		if key == KEY_LEFT:
-			self._cur = max(0, c - 1)
-		elif key == KEY_RIGHT:
-			self._cur = min(len(text), c + 1)
-		elif key == KEY_HOME:
-			self._cur = 0
-		elif key == KEY_END:
-			self._cur = len(text)
-		elif key in (KEY_BACKSPACE, 127):
-			if c > 0:
-				self._text = text[:c-1] + text[c:]
-				self._cur -= 1
-				if tv: tv.set(self._text)
-		elif key == KEY_DC:
-			if c < len(text):
-				self._text = text[:c] + text[c+1:]
-				if tv: tv.set(self._text)
-		elif 32 <= key <= 126:
-			self._text = text[:c] + chr(key) + text[c:]
-			self._cur += 1
-			if tv: tv.set(self._text)
-		else:
-			return super()._handleKey(key)
-		self._scrollToCursor()
-		self._markDirty()
-		return True
+		return super()._handleKey(key)
 
 	def _handleMouse(self, mx, my, bstate):
-		if not (bstate & (curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED)):
+		if self._opts.get('state') == 'disabled':
 			return False
-		bd   = int(self._opts.get('borderwidth') or 0)
-		btnX = self._x + self._w - bd - 3
-		if mx >= btnX:
-			col = mx - btnX
-			self._increment(+1 if col <= 1 else -1)
-		else:
-			bx = self._x + bd
-			self._cur = max(0, min(len(self._text), self._scrollX + (mx - bx)))
-			self._scrollToCursor()
-		self._markDirty()
-		return True
+		wheel = isWheel(bstate)
+		if wheel:
+			self._increment(-wheel)
+			return True
+		btnX = self._buttonX()
+		if mx >= btnX and not self._mouseDown:
+			if bstate & (B1_PRESS | B1_CLICK) and not (bstate & MOTION):
+				col = mx - btnX
+				if col >= 1:
+					self._increment(+1 if col == 1 else -1)
+			return True
+		return super()._handleMouse(mx, my, bstate)

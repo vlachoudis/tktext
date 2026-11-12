@@ -1,5 +1,6 @@
-from ._core import Widget, _fillRect, _drawBorder
-from ._layout import doPackLayout, doGridLayout, doPlaceLayout
+from ._core import Widget, _fillRect, _drawBorder, _addStr, _int
+from ._layout import doPackLayout, doGridLayout, doPlaceLayout, \
+	packPreferredSize, gridPreferredSize
 
 
 class Frame(Widget):
@@ -7,28 +8,53 @@ class Frame(Widget):
 	for its children.  Mirrors tkinter.Frame / tkinter.ttk.Frame."""
 
 	def __init__(self, parent=None, **kwargs):
-		super().__init__(parent, **kwargs)
 		# Per-row / per-column configuration for grid manager
 		self._rowCfg = {}
 		self._colCfg = {}
+		super().__init__(parent)
+		self._opts.update({
+			'text':		'',	# LabelFrame-style caption on the border
+			'labelanchor':	'nw',
+			'takefocus':	False,
+		})
+		if kwargs:
+			self.configure(**kwargs)
 
 	# ------------------------------------------------------------------
 	# Grid configuration
 	# ------------------------------------------------------------------
 
-	def columnconfigure(self, col, **kwargs):
-		"""Configure grid column *col*.  Accepts weight, minsize, pad."""
-		self._colCfg.setdefault(col, {}).update(kwargs)
+	def _configureIndex(self, table, index, kwargs):
+		if isinstance(index, (tuple, list)):
+			indices = index
+		elif isinstance(index, str) and index == 'all':
+			indices = range(64)
+		else:
+			indices = [index]
+		if not kwargs:
+			return dict(table.get(_int(indices[0]), {})) if indices else {}
+		for i in indices:
+			table.setdefault(_int(i), {}).update(kwargs)
 		self._markDirty()
+		return None
 
-	def rowconfigure(self, row, **kwargs):
+	def columnconfigure(self, col, cnf=None, **kwargs):
+		"""Configure grid column *col*.  Accepts weight, minsize, pad."""
+		if cnf:
+			kwargs.update(cnf)
+		return self._configureIndex(self._colCfg, col, kwargs)
+
+	def rowconfigure(self, row, cnf=None, **kwargs):
 		"""Configure grid row *row*.  Accepts weight, minsize, pad."""
-		self._rowCfg.setdefault(row, {}).update(kwargs)
-		self._markDirty()
+		if cnf:
+			kwargs.update(cnf)
+		return self._configureIndex(self._rowCfg, row, kwargs)
 
 	# camelCase aliases
-	columnConfigure = columnconfigure
-	rowConfigure    = rowconfigure
+	columnConfigure		= columnconfigure
+	rowConfigure		= rowconfigure
+	grid_columnconfigure	= columnconfigure
+	grid_rowconfigure	= rowconfigure
 
 	def columnkeyword(self, col):
 		return dict(self._colCfg.get(col, {}))
@@ -36,22 +62,54 @@ class Frame(Widget):
 	def rowkeyword(self, row):
 		return dict(self._rowCfg.get(row, {}))
 
-	def _isFocusable(self):
-		return False
+	def gridSize(self):
+		"""Return (columns, rows) of the grid."""
+		gridded = [c._geoInfo for c in self._children if c._geoManager == 'grid']
+		if not gridded:
+			return (0, 0)
+		return (max(o['column'] + o.get('columnspan', 1) for o in gridded),
+			max(o['row'] + o.get('rowspan', 1) for o in gridded))
+
+	grid_size = gridSize
+
+	def gridSlaves(self, row=None, column=None):
+		result = []
+		for c in reversed(self._children):
+			if c._geoManager != 'grid':
+				continue
+			o = c._geoInfo
+			if row is not None and o['row'] != row:
+				continue
+			if column is not None and o['column'] != column:
+				continue
+			result.append(c)
+		return result
+
+	def packSlaves(self):
+		return [c for c in self._children if c._geoManager == 'pack']
+
+	grid_slaves	= gridSlaves
+	pack_slaves	= packSlaves
 
 	# ------------------------------------------------------------------
 	# Layout
 	# ------------------------------------------------------------------
 
-	def _layoutChildren(self):
-		"""Compute positions for all children managed by any geometry manager."""
+	def _managed(self):
 		packed  = [(c, c._geoInfo) for c in self._children if c._geoManager == 'pack']
 		gridded = [(c, c._geoInfo) for c in self._children if c._geoManager == 'grid']
 		placed  = [(c, c._geoInfo) for c in self._children if c._geoManager == 'place']
+		return packed, gridded, placed
 
-		# Adjust content area for border
-		bd = int(self._opts.get('borderwidth') or 0)
-		inner = _InnerGeom(self, bd)
+	def _innerGeom(self):
+		bd = self._border()
+		return _InnerGeom(self._x + bd, self._y + bd,
+			max(0, self._w - 2*bd), max(0, self._h - 2*bd))
+
+	def _layoutChildren(self):
+		"""Compute positions for all children managed by any geometry manager."""
+		packed, gridded, placed = self._managed()
+		inner = self._innerGeom()
 
 		if packed:
 			doPackLayout(inner, packed)
@@ -61,33 +119,32 @@ class Frame(Widget):
 			doPlaceLayout(inner, placed)
 
 	def _preferredSize(self):
-		bd = int(self._opts.get('borderwidth') or 0)
-		ow = int(self._opts.get('width') or 0)
-		oh = int(self._opts.get('height') or 0)
-		if ow and oh:
-			return (ow + 2*bd, oh + 2*bd)
-		# Derive from children
-		pw = ph = 0
-		for c in self._children:
-			if c._geoManager:
-				cw, ch = c._preferredSize()
-				pw = max(pw, cw)
-				ph = max(ph, ch)
-		return (max(pw, ow or 1) + 2*bd, max(ph, oh or 1) + 2*bd)
+		bd = self._cfgBorder()
+		ow = _int(self._opts.get('width'))
+		oh = _int(self._opts.get('height'))
+		packed, gridded, _ = self._managed()
+		pw, ph = packPreferredSize(packed)
+		gw, gh = gridPreferredSize(gridded, self._rowCfg, self._colCfg)
+		cw = max(pw, gw)
+		ch = max(ph, gh)
+		# Like tkinter: with managed children the requested size follows
+		# them (geometry propagation); otherwise width/height are used.
+		if not packed and not gridded:
+			cw, ch = ow, oh
+		return (max(cw, 1) + 2*bd, max(ch, 1) + 2*bd)
 
 	# ------------------------------------------------------------------
 	# Rendering
 	# ------------------------------------------------------------------
 
 	def render(self, scr):
-		if self._w <= 0 or self._h <= 0:
+		if not self._isMapped():
 			return
 		attr = self._getAttr()
-		bd   = int(self._opts.get('borderwidth') or 0)
+		bd   = self._border()
 
 		# Background fill
-		bg = self._opts.get('bg') or ''
-		if bg:
+		if self._opts.get('bg'):
 			_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
 
 		# Border
@@ -95,7 +152,33 @@ class Frame(Widget):
 		if bd > 0 and relief != 'flat':
 			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
 
+		text = str(self._opts.get('text') or '')
+		if text and self._w > 4:
+			label = f' {text} '[:self._w - 2]
+			anchor = self._opts.get('labelanchor', 'nw')
+			if 'e' in anchor:
+				lx = self._x + self._w - 1 - len(label)
+			elif anchor in ('n', 's'):
+				lx = self._x + (self._w - len(label)) // 2
+			else:
+				lx = self._x + 1
+			ly = self._y + self._h - 1 if anchor.startswith('s') else self._y
+			_addStr(scr, ly, lx, label, attr)
+
 		self._renderChildren(scr)
+
+
+class LabelFrame(Frame):
+	"""Frame with a caption drawn on its border.  Mirrors tkinter.LabelFrame."""
+
+	def __init__(self, parent=None, **kwargs):
+		kwargs.setdefault('relief',      'single')
+		kwargs.setdefault('borderwidth', 1)
+		super().__init__(parent, **kwargs)
+
+	def _preferredSize(self):
+		w, h = super()._preferredSize()
+		return (max(w, len(str(self._opts.get('text') or '')) + 4), h)
 
 
 # ---------------------------------------------------------------------------
@@ -104,8 +187,8 @@ class Frame(Widget):
 # ---------------------------------------------------------------------------
 
 class _InnerGeom:
-	def __init__(self, frame, bd):
-		self._x = frame._x + bd
-		self._y = frame._y + bd
-		self._w = max(1, frame._w - 2*bd)
-		self._h = max(1, frame._h - 2*bd)
+	def __init__(self, x, y, w, h):
+		self._x = x
+		self._y = y
+		self._w = w
+		self._h = h

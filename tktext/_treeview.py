@@ -1,97 +1,168 @@
 import curses
-from ._core import Widget, _addStr, _fillRect, _drawBorder, _clip, _pad
+from ._core import TclError, Widget, _addStr, _fillRect, _drawBorder, _pad, _int
+from ._listbox import _ScrollMixin
 from ._events import (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT,
-	KEY_HOME, KEY_END, KEY_PPAGE, KEY_NPAGE,
-	KEY_ENTER, KEY_CR, KEY_SPACE)
+	KEY_HOME, KEY_END, KEY_PPAGE, KEY_NPAGE, KEY_ENTER, KEY_SPACE,
+	B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, MOTION, isWheel)
 
 
-class Treeview(Widget):
+def _flatten(items):
+	"""Accept f(a, b) as well as f((a, b)) like tkinter."""
+	out = []
+	for it in items:
+		if isinstance(it, (tuple, list)):
+			out.extend(str(i) for i in it)
+		elif it is not None:
+			out.append(str(it))
+	return out
+
+
+def _asList(v):
+	if v is None or v == '':
+		return []
+	if isinstance(v, str):
+		return v.split()
+	return list(v)
+
+
+class Treeview(_ScrollMixin, Widget):
 	"""Hierarchical tree / table widget.  Mirrors tkinter.ttk.Treeview."""
 
 	def __init__(self, parent=None, **kwargs):
 		super().__init__(parent)
 		self._opts.update({
-			'columns':	(),
-			'show':		'tree headings',
-			'selectmode':	'browse',
-			'displaycolumns':'#all',
-			'height':	10,
+			'columns':		(),
+			'show':			'tree headings',
+			'selectmode':		'extended',
+			'displaycolumns':	'#all',
+			'height':		10,
+			'yscrollcommand':	None,
+			'xscrollcommand':	None,
 		})
 		kwargs.setdefault('relief', 'sunken')
 		kwargs.setdefault('borderwidth', 1)
-		if kwargs:
-			self.configure(**kwargs)
 
 		# Items: iid -> dict with keys:
 		#   text, values, open, tags, parent, children
 		self._items = {'': {
 			'text': '', 'values': [], 'open': True,
-			'tags': [], 'parent': None, 'children': [],
+			'tags': [], 'parent': None, 'children': [], 'image': '',
 		}}
 		self._iidCounter = 0
 
-		# Column config: col_id -> {width, minwidth, stretch, heading, anchor}
-		self._colCfg  = {}
-		self._headCfg = {}	# col_id -> {text, anchor, command}
-
-		# Set up '#0' (tree column) defaults
-		self._colCfg['#0'] = {'width': 20, 'minwidth': 10, 'stretch': True,
-			'anchor': 'w'}
-		self._headCfg['#0'] = {'text': '', 'anchor': 'w', 'command': None}
-
-		# Set up extra columns from 'columns' option
-		for col in (kwargs.get('columns') or ()):
-			cid = str(col)
-			self._colCfg[cid]  = {'width': 15, 'minwidth': 10, 'stretch': True,
-				'anchor': 'w'}
-			self._headCfg[cid] = {'text': cid, 'anchor': 'w', 'command': None}
+		# Column config: col_id -> {width, minwidth, stretch, anchor}
+		self._colCfg  = {'#0': {'width': 20, 'minwidth': 4, 'stretch': True,
+			'anchor': 'w', 'id': '#0'}}
+		self._headCfg = {'#0': {'text': '', 'anchor': 'w', 'command': None,
+			'image': ''}}
 
 		# View state
 		self._sel       = []		# list of selected iids
 		self._focusIid  = ''		# iid of focused row
 		self._scrollY   = 0		# first visible row index (in flat list)
 		self._flatCache = None		# cached flat list of (iid, depth)
-		self._tagCfg    = {}		# tag -> {fg, bg, font}
+		self._tagCfg    = {}		# tag -> {foreground, background, font}
+		self._tagBinds  = {}		# tag -> {sequence: [callable]}
+		self._sbDrag    = None
+
+		if kwargs:
+			self.configure(**kwargs)
+
+	def configure(self, cnf=None, **kwargs):
+		if cnf:
+			kwargs.update(cnf)
+		if 'columns' in kwargs:
+			cols = kwargs['columns']
+			if isinstance(cols, str):
+				cols = cols.split()
+			kwargs['columns'] = tuple(str(c) for c in (cols or ()))
+			for cid in kwargs['columns']:
+				self._colCfg.setdefault(cid, {'width': 15, 'minwidth': 4,
+					'stretch': True, 'anchor': 'w', 'id': cid})
+				self._headCfg.setdefault(cid, {'text': '', 'anchor': 'w',
+					'command': None, 'image': ''})
+		return super().configure(**kwargs)
+
+	config = configure
 
 	# ------------------------------------------------------------------
 	# Column / heading configuration
 	# ------------------------------------------------------------------
 
+	def _colId(self, col):
+		if isinstance(col, int):
+			cols = list(self._opts.get('columns') or ())
+			return cols[col] if 0 <= col < len(cols) else str(col)
+		s = str(col)
+		if s.startswith('#') and s[1:].isdigit() and s != '#0':
+			n    = int(s[1:]) - 1
+			disp = self._colList()
+			disp = [c for c in disp if c != '#0']
+			return disp[n] if 0 <= n < len(disp) else s
+		return s
+
 	def column(self, col, option=None, **kwargs):
 		"""Configure or query column *col*."""
-		cid = str(col)
-		if cid not in self._colCfg:
-			self._colCfg[cid] = {'width': 15, 'minwidth': 10,
-				'stretch': True, 'anchor': 'w'}
+		cid = self._colId(col)
+		cfg = self._colCfg.setdefault(cid, {'width': 15, 'minwidth': 4,
+			'stretch': True, 'anchor': 'w', 'id': cid})
 		if option:
-			return self._colCfg[cid].get(option)
-		self._colCfg[cid].update(kwargs)
+			return cfg.get(option)
+		if not kwargs:
+			return dict(cfg)
+		for k, v in kwargs.items():
+			if k in ('width', 'minwidth'):
+				v = _int(v, cfg.get(k, 0))
+			cfg[k] = v
 		self._markDirty()
+		return None
 
 	def heading(self, col, option=None, **kwargs):
 		"""Configure or query column heading *col*."""
-		cid = str(col)
-		if cid not in self._headCfg:
-			self._headCfg[cid] = {'text': cid, 'anchor': 'w', 'command': None}
+		cid = self._colId(col)
+		cfg = self._headCfg.setdefault(cid, {'text': '', 'anchor': 'w',
+			'command': None, 'image': ''})
 		if option:
-			return self._headCfg[cid].get(option)
-		self._headCfg[cid].update(kwargs)
+			return cfg.get(option)
+		if not kwargs:
+			return dict(cfg)
+		cfg.update(kwargs)
 		self._markDirty()
+		return None
 
 	# ------------------------------------------------------------------
 	# Tag configuration
 	# ------------------------------------------------------------------
 
-	def tagConfigure(self, name, **kwargs):
-		self._tagCfg[name] = kwargs
+	def tagConfigure(self, name, option=None, **kwargs):
+		cfg = self._tagCfg.setdefault(name, {})
+		if option is not None:
+			return cfg.get(option)
+		if not kwargs:
+			return dict(cfg)
+		for k, v in kwargs.items():
+			k = {'fg': 'foreground', 'bg': 'background'}.get(k, k)
+			cfg[k] = v
 		self._markDirty()
-
-	tag_configure = tagConfigure
+		return None
 
 	def tagCget(self, name, option):
+		option = {'fg': 'foreground', 'bg': 'background'}.get(option, option)
 		return self._tagCfg.get(name, {}).get(option)
 
-	tag_cget = tagCget
+	def tagHas(self, tagname, item=None):
+		if item is None:
+			return tuple(iid for iid, n in self._items.items()
+				if iid and tagname in n['tags'])
+		return tagname in self._items.get(str(item), {}).get('tags', [])
+
+	def tagBind(self, tagname, sequence=None, callback=None):
+		self._tagBinds.setdefault(tagname, {}).setdefault(sequence, []).append(callback)
+
+	tag_configure	= tagConfigure
+	tag_cget	= tagCget
+	tag_has		= tagHas
+	tag_bind	= tagBind
 
 	# ------------------------------------------------------------------
 	# Item manipulation
@@ -100,31 +171,34 @@ class Treeview(Widget):
 	def insert(self, parent, index, iid=None, **kwargs):
 		"""Insert a new item.  Return the item's iid."""
 		if iid is None:
-			self._iidCounter += 1
-			iid = f'I{self._iidCounter:04d}'
-		iid = str(iid)
+			while True:
+				self._iidCounter += 1
+				iid = f'I{self._iidCounter:03X}'
+				if iid not in self._items:
+					break
+		iid    = str(iid)
 		parent = str(parent)
 
 		if parent not in self._items:
-			raise ValueError(f'Parent item {parent!r} not found')
+			raise TclError(f'Item {parent} not found')
 		if iid in self._items:
-			raise ValueError(f'Item {iid!r} already exists')
+			raise TclError(f'Item {iid} already exists')
 
 		self._items[iid] = {
 			'text':     str(kwargs.get('text', '')),
-			'values':   list(kwargs.get('values', [])),
+			'values':   _asList(kwargs.get('values')),
 			'open':     bool(kwargs.get('open', False)),
-			'tags':     list(kwargs.get('tags', [])),
+			'tags':     _asList(kwargs.get('tags')),
+			'image':    kwargs.get('image', ''),
 			'parent':   parent,
 			'children': [],
 		}
 
 		siblings = self._items[parent]['children']
-		if index == 'end' or index == 'END':
+		if index in ('end', 'END'):
 			siblings.append(iid)
 		else:
-			idx = max(0, min(int(index), len(siblings)))
-			siblings.insert(idx, iid)
+			siblings.insert(max(0, min(_int(index), len(siblings))), iid)
 
 		self._flatCache = None
 		self._markDirty()
@@ -132,13 +206,15 @@ class Treeview(Widget):
 
 	def delete(self, *items):
 		"""Delete items (and their subtrees)."""
-		for iid in items:
-			iid = str(iid)
-			if iid not in self._items or iid == '':
-				continue
-			self._deleteSubtree(iid)
+		changed = False
+		for iid in _flatten(items):
+			if iid in self._items and iid != '':
+				changed |= iid in self._sel
+				self._deleteSubtree(iid)
 		self._flatCache = None
 		self._markDirty()
+		if changed:
+			self._fireVirtual('<<TreeviewSelect>>')
 
 	def _deleteSubtree(self, iid):
 		item = self._items.get(iid)
@@ -147,7 +223,7 @@ class Treeview(Widget):
 		for child in list(item['children']):
 			self._deleteSubtree(child)
 		parent = item['parent']
-		if parent and parent in self._items:
+		if parent is not None and parent in self._items:
 			siblings = self._items[parent]['children']
 			if iid in siblings:
 				siblings.remove(iid)
@@ -159,12 +235,11 @@ class Treeview(Widget):
 
 	def detach(self, *items):
 		"""Remove items from tree without deleting them."""
-		for iid in items:
-			iid = str(iid)
+		for iid in _flatten(items):
 			item = self._items.get(iid)
-			if item:
+			if item and iid != '':
 				p = item['parent']
-				if p and p in self._items:
+				if p is not None and p in self._items:
 					sib = self._items[p]['children']
 					if iid in sib:
 						sib.remove(iid)
@@ -173,125 +248,123 @@ class Treeview(Widget):
 		self._markDirty()
 
 	def reattach(self, item, parent, index):
-		"""Reattach a detached item."""
+		"""Reattach (move) *item* under *parent* at *index*."""
 		item   = str(item)
 		parent = str(parent)
 		if item not in self._items or parent not in self._items:
-			return
+			raise TclError(f'Item {item} not found')
+		old = self._items[item]['parent']
+		if old is not None and old in self._items:
+			sib = self._items[old]['children']
+			if item in sib:
+				sib.remove(item)
 		self._items[item]['parent'] = parent
 		siblings = self._items[parent]['children']
-		if item not in siblings:
-			if index == 'end':
-				siblings.append(item)
-			else:
-				siblings.insert(int(index), item)
+		if index in ('end', 'END'):
+			siblings.append(item)
+		else:
+			siblings.insert(max(0, min(_int(index), len(siblings))), item)
 		self._flatCache = None
 		self._markDirty()
 
-	def move(self, item, parent, index):
-		self.detach(item)
-		self.reattach(item, parent, index)
+	move = reattach
 
 	def item(self, iid, option=None, **kwargs):
 		"""Get or set item options."""
 		iid = str(iid)
 		if iid not in self._items:
-			raise ValueError(f'Item {iid!r} not found')
+			raise TclError(f'Item {iid} not found')
 		node = self._items[iid]
 		if option is not None:
+			if option in ('values', 'tags'):
+				return tuple(node[option])
 			return node.get(option)
 		if kwargs:
 			for k, v in kwargs.items():
-				if k == 'values':
-					node['values'] = list(v)
-				elif k == 'tags':
-					node['tags'] = list(v)
+				if k in ('values', 'tags'):
+					node[k] = _asList(v)
+				elif k == 'open':
+					node[k] = bool(v)
+				elif k == 'text':
+					node[k] = str(v)
 				else:
 					node[k] = v
 			self._flatCache = None
 			self._markDirty()
-		return dict(node)
+			return None
+		return {'text': node['text'], 'image': node.get('image', ''),
+			'values': tuple(node['values']), 'open': node['open'],
+			'tags': tuple(node['tags'])}
 
 	def set(self, item, column=None, value=None):
 		"""Get or set the value of *column* in *item*."""
 		item = str(item)
 		node = self._items.get(item)
 		if node is None:
-			return
+			raise TclError(f'Item {item} not found')
 		cols = list(self._opts.get('columns') or [])
 		if column is None:
-			# Return all values as dict
-			return {str(c): (node['values'][i] if i < len(node['values']) else '')
+			return {c: (node['values'][i] if i < len(node['values']) else '')
 				for i, c in enumerate(cols)}
+		cid = self._colId(column)
+		if cid not in cols:
+			raise TclError(f'Invalid column index {column}')
+		idx  = cols.index(cid)
+		vals = node['values']
 		if value is None:
-			cid = str(column)
-			if cid in cols:
-				idx = cols.index(cid)
-				vals = node['values']
-				return vals[idx] if idx < len(vals) else ''
-			return ''
-		# Set
-		cid  = str(column)
-		if cid in cols:
-			idx = cols.index(cid)
-			vals = node['values']
-			while len(vals) <= idx:
-				vals.append('')
-			vals[idx] = value
-			self._markDirty()
+			return vals[idx] if idx < len(vals) else ''
+		while len(vals) <= idx:
+			vals.append('')
+		vals[idx] = value
+		self._markDirty()
+		return None
 
 	def getChildren(self, item=''):
 		"""Return tuple of children iids of *item*."""
-		item = str(item)
-		node = self._items.get(item)
+		node = self._items.get(str(item) if item is not None else '')
 		return tuple(node['children']) if node else ()
 
-	get_children = getChildren
+	def setChildren(self, item, *newchildren):
+		item = str(item)
+		for c in list(self.getChildren(item)):
+			self.detach(c)
+		for c in _flatten(newchildren):
+			self.reattach(c, item, 'end')
 
 	def getParent(self, item):
 		"""Return parent iid of *item*."""
-		item = str(item)
-		node = self._items.get(item)
-		return node['parent'] if node else ''
+		node = self._items.get(str(item))
+		return (node['parent'] or '') if node else ''
 
-	get_parent = getParent
+	get_children	= getChildren
+	set_children	= setChildren
+	get_parent	= getParent
+	parent		= getParent
 
 	def index(self, item):
 		"""Return integer index of *item* among its siblings."""
-		item = str(item)
-		node = self._items.get(item)
-		if not node:
+		node = self._items.get(str(item))
+		if not node or node['parent'] is None:
 			return 0
-		parent = node['parent']
-		if parent is None:
-			return 0
-		siblings = self._items[parent]['children']
-		return siblings.index(item) if item in siblings else 0
+		siblings = self._items[node['parent']]['children']
+		return siblings.index(str(item)) if str(item) in siblings else 0
 
 	def prev(self, item):
 		"""Return the iid preceding *item* among its siblings."""
-		item = str(item)
-		node = self._items.get(item)
-		if not node:
+		node = self._items.get(str(item))
+		if not node or node['parent'] is None:
 			return ''
-		parent = node['parent']
-		if parent is None:
-			return ''
-		siblings = self._items[parent]['children']
-		idx = siblings.index(item) if item in siblings else 0
+		siblings = self._items[node['parent']]['children']
+		idx = siblings.index(str(item))
 		return siblings[idx - 1] if idx > 0 else ''
 
 	def next(self, item):
 		"""Return the iid following *item* among its siblings."""
-		item = str(item)
-		node = self._items.get(item)
-		if not node:
+		node = self._items.get(str(item))
+		if not node or node['parent'] is None:
 			return ''
-		parent = node['parent']
-		if parent is None:
-			return ''
-		siblings = self._items[parent]['children']
-		idx = siblings.index(item) if item in siblings else -1
+		siblings = self._items[node['parent']]['children']
+		idx = siblings.index(str(item))
 		return siblings[idx + 1] if idx < len(siblings) - 1 else ''
 
 	def exists(self, item):
@@ -299,73 +372,75 @@ class Treeview(Widget):
 
 	# Selection
 
-	def selection(self):
+	def selection(self, *args):
 		"""Return tuple of selected iids."""
+		if args:		# old-style selection('set', items)
+			op, items = args[0], args[1:]
+			getattr(self, f'selection_{op}')(*items)
+			return None
 		return tuple(self._sel)
+
+	def _setSelection(self, newSel):
+		newSel = [i for i in newSel if i in self._items and i != '']
+		if newSel != self._sel:
+			self._sel = newSel
+			self._markDirty()
+			self._fireVirtual('<<TreeviewSelect>>')
 
 	def selectionSet(self, *items):
 		"""Set selection to *items*."""
-		self._sel = [str(i) for i in items if str(i) in self._items]
-		self._markDirty()
-
-	selection_set = selectionSet
+		self._setSelection(_flatten(items))
 
 	def selectionAdd(self, *items):
-		for i in items:
-			iid = str(i)
-			if iid not in self._sel and iid in self._items:
-				self._sel.append(iid)
-		self._markDirty()
-
-	selection_add = selectionAdd
+		self._setSelection(self._sel + [i for i in _flatten(items) if i not in self._sel])
 
 	def selectionRemove(self, *items):
-		for i in items:
-			iid = str(i)
-			if iid in self._sel:
-				self._sel.remove(iid)
-		self._markDirty()
-
-	selection_remove = selectionRemove
+		rm = set(_flatten(items))
+		self._setSelection([i for i in self._sel if i not in rm])
 
 	def selectionToggle(self, *items):
-		for i in items:
-			iid = str(i)
-			if iid in self._sel:
-				self._sel.remove(iid)
-			elif iid in self._items:
-				self._sel.append(iid)
-		self._markDirty()
+		sel = list(self._sel)
+		for i in _flatten(items):
+			if i in sel:
+				sel.remove(i)
+			else:
+				sel.append(i)
+		self._setSelection(sel)
 
-	selection_toggle = selectionToggle
+	selection_set		= selectionSet
+	selection_add		= selectionAdd
+	selection_remove	= selectionRemove
+	selection_toggle	= selectionToggle
 
 	def focus(self, item=None):
-		"""Get or set focused item."""
+		"""Get or set the focused item (tkinter semantics).  Use
+		focus_set() to give the widget keyboard focus."""
 		if item is None:
 			return self._focusIid
 		self._focusIid = str(item)
 		self._markDirty()
+		return None
 
 	def see(self, item):
-		"""Scroll so that *item* is visible."""
-		flat = self._getFlat()
-		for i, (iid, _) in enumerate(flat):
-			if iid == str(item):
-				bd   = int(self._opts.get('borderwidth') or 0)
-				show = self._opts.get('show', 'tree headings')
-				hasHead = 'headings' in show
-				visH = max(1, self._h - 2*bd - (1 if hasHead else 0))
-				if i < self._scrollY:
-					self._scrollY = i
-				elif i >= self._scrollY + visH:
-					self._scrollY = i - visH + 1
-				self._markDirty()
-				return
+		"""Open the ancestors of *item* and scroll it into view."""
+		iid  = str(item)
+		node = self._items.get(iid)
+		if node is None:
+			return
+		p = node['parent']
+		while p:
+			self._items[p]['open'] = True
+			p = self._items[p]['parent']
+		self._flatCache = None
+		for i, (fid, _) in enumerate(self._getFlat()):
+			if fid == iid:
+				self._ensureVisible(i)
+				break
+		self._markDirty()
 
 	def open(self, item, value=None):
 		"""Get or set open state of *item*."""
-		iid = str(item)
-		node = self._items.get(iid)
+		node = self._items.get(str(item))
 		if node is None:
 			return False
 		if value is None:
@@ -373,6 +448,7 @@ class Treeview(Widget):
 		node['open'] = bool(value)
 		self._flatCache = None
 		self._markDirty()
+		return None
 
 	# ------------------------------------------------------------------
 	# Flat list (visible rows in tree order)
@@ -381,8 +457,7 @@ class Treeview(Widget):
 	def _getFlat(self):
 		if self._flatCache is None:
 			result = []
-			self._buildFlat('', 0, result)
-			# Remove root itself
+			self._buildFlat('', -1, result)
 			self._flatCache = result
 		return self._flatCache
 
@@ -394,182 +469,258 @@ class Treeview(Widget):
 			result.append((iid, depth))
 		if node['open'] or iid == '':
 			for child in node['children']:
-				self._buildFlat(child, depth + (0 if iid == '' else 1), result)
+				self._buildFlat(child, depth + 1, result)
 
 	# ------------------------------------------------------------------
-	# Preferred size / layout
+	# Geometry helpers
 	# ------------------------------------------------------------------
+
+	def _hasHead(self) -> bool:
+		return 'headings' in str(self._opts.get('show', 'tree headings'))
+
+	def _visRows(self) -> int:
+		return max(0, self._h - 2*self._border() - (1 if self._hasHead() else 0))
+
+	def _totalRows(self) -> int:
+		return len(self._getFlat())
+
+	def _dataY(self) -> int:
+		return self._y + self._border() + (1 if self._hasHead() else 0)
+
+	def _innerW(self) -> int:
+		w = max(1, self._w - 2*self._border())
+		return w - 1 if self._showInternalBar() else w
 
 	def _preferredSize(self):
-		bd  = int(self._opts.get('borderwidth') or 0)
-		ow  = int(self._opts.get('width') or 0)
-		oh  = int(self._opts.get('height') or 10)
+		bd = self._cfgBorder()
+		ow = _int(self._opts.get('width'))
+		oh = _int(self._opts.get('height'), 10) or 10
 		if not ow:
-			ow = sum(c.get('width', 15) for c in self._colCfg.values()) + 2
-		return (ow + 2*bd, oh + 2*bd)
-
-	# ------------------------------------------------------------------
-	# Rendering
-	# ------------------------------------------------------------------
+			ow = sum(self._colCfg.get(c, {}).get('width', 15) for c in self._colList())
+		return (max(1, ow) + 2*bd, oh + 2*bd + (1 if self._hasHead() else 0))
 
 	def _colList(self):
 		"""Return ordered list of visible column ids."""
-		show = self._opts.get('show', 'tree headings')
-		cols = []
-		if 'tree' in show:
-			cols.append('#0')
-		extra = list(self._opts.get('columns') or [])
+		show = str(self._opts.get('show', 'tree headings'))
+		cols = ['#0'] if 'tree' in show else []
+		extra = [str(c) for c in (self._opts.get('columns') or [])]
 		disp  = self._opts.get('displaycolumns', '#all')
-		if disp == '#all':
-			cols.extend(str(c) for c in extra)
+		if disp in ('#all', ('#all',), None):
+			cols.extend(extra)
 		else:
-			cols.extend(str(c) for c in disp if str(c) in [str(e) for e in extra])
+			if isinstance(disp, str):
+				disp = disp.split()
+			cols.extend(self._colId(c) for c in disp if self._colId(c) in extra)
 		return cols
 
 	def _colWidths(self, totalW):
 		"""Return list of (col_id, width) for visible columns."""
 		cols   = self._colList()
-		widths = []
-		for cid in cols:
-			cfg = self._colCfg.get(cid, {})
-			widths.append(cfg.get('width', 15))
-		# Distribute remaining space to stretch columns
-		used    = sum(widths)
-		extra   = totalW - used
+		widths = [max(0, _int(self._colCfg.get(c, {}).get('width', 15), 15)) for c in cols]
+		extra  = totalW - sum(widths)
 		stretch = [i for i, cid in enumerate(cols)
 			if self._colCfg.get(cid, {}).get('stretch', True)]
 		if stretch and extra > 0:
 			per = extra // len(stretch)
 			for i in stretch:
 				widths[i] += per
+			widths[stretch[-1]] += extra - per * len(stretch)
 		return list(zip(cols, widths))
+
+	def _preRender(self):
+		self._clampScroll()
+		self._notifyYScroll()
+
+	# ------------------------------------------------------------------
+	# Rendering
+	# ------------------------------------------------------------------
 
 	def _getItemAttr(self, iid):
 		"""Return curses attr for item, considering tags."""
-		node = self._items.get(str(iid), {})
-		for tag in reversed(node.get('tags', [])):
+		node  = self._items.get(str(iid), {})
+		fg = bg = ''
+		bold = False
+		for tag in node.get('tags', []):
 			cfg = self._tagCfg.get(tag, {})
-			if cfg:
-				fg = cfg.get('foreground', '') or cfg.get('fg', '')
-				bg = cfg.get('background', '') or cfg.get('bg', '')
-				if fg or bg:
-					return self._getAttr(fg=fg, bg=bg)
-		return self._getAttr()
+			fg  = cfg.get('foreground') or fg
+			bg  = cfg.get('background') or bg
+			bold = bold or 'bold' in str(cfg.get('font') or '').lower()
+		return self._getAttr(fg=fg, bg=bg, bold=bold)
 
 	def render(self, scr):
-		if self._w <= 0 or self._h <= 0:
+		if not self._isMapped():
 			return
 
-		bd     = int(self._opts.get('borderwidth') or 0)
-		show   = self._opts.get('show', 'tree headings')
-		hasHead = 'headings' in show
-		relief = self._opts.get('relief', 'sunken')
-		attr   = self._getAttr()
+		bd      = self._border()
+		relief  = self._opts.get('relief', 'sunken')
+		attr    = self._getAttr()
 
 		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
-		if bd > 0:
+		if bd > 0 and relief != 'flat':
 			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
 
 		innerX  = self._x + bd
-		innerY  = self._y + bd
-		innerW  = max(1, self._w - 2*bd)
-		innerH  = max(1, self._h - 2*bd)
-
+		innerW  = self._innerW()
 		colInfo = self._colWidths(innerW)
-		headRow = innerY
-		dataY   = innerY + (1 if hasHead else 0)
-		visH    = innerH - (1 if hasHead else 0)
+		dataY   = self._dataY()
+		visH    = self._visRows()
 
-		# ---- heading row ----
-		if hasHead:
+		def cells(texts, y, a, anchors):
 			x = innerX
-			headAttr = self._getAttr(bold=True) | curses.A_BOLD
-			for cid, cw in colInfo:
-				hcfg = self._headCfg.get(cid, {})
-				htxt = str(hcfg.get('text', cid))
-				_addStr(scr, headRow, x, _pad(htxt, cw), headAttr)
+			for (_, cw), text, anc in zip(colInfo, texts, anchors):
+				w = min(cw, innerX + innerW - x)
+				if w <= 0:
+					break
+				align = 'right' if anc in ('e', 'ne', 'se') else \
+					'center' if anc in ('center', 'n', 's') else 'left'
+				cell = _pad(text, max(0, w - 1), align) + ' ' if w > 1 else text[:w]
+				_addStr(scr, y, x, _pad(cell, w), a)
 				x += cw
 
-		# ---- data rows ----
-		flat = self._getFlat()
-		total = len(flat)
+		# ---- heading row ----
+		if self._hasHead():
+			texts   = [str(self._headCfg.get(c, {}).get('text', '')) for c, _ in colInfo]
+			anchors = [self._headCfg.get(c, {}).get('anchor', 'w') for c, _ in colInfo]
+			cells(texts, self._y + bd, self._getAttr(bold=True) | curses.A_UNDERLINE, anchors)
 
+		# ---- data rows ----
+		flat    = self._getFlat()
+		cols    = [str(c) for c in (self._opts.get('columns') or [])]
+		anchors = [self._colCfg.get(c, {}).get('anchor', 'w') for c, _ in colInfo]
 		for rowIdx in range(visH):
 			flatIdx = self._scrollY + rowIdx
-			screenY = dataY + rowIdx
-
-			if flatIdx >= total:
-				_addStr(scr, screenY, innerX, ' ' * innerW, attr)
-				continue
-
+			if flatIdx >= len(flat):
+				break
 			iid, depth = flat[flatIdx]
 			node = self._items.get(iid, {})
-			isSelected = iid in self._sel
-			isFocused  = iid == self._focusIid and self._focused
-
-			if isSelected:
+			if iid in self._sel:
 				rowAttr = attr | curses.A_REVERSE
-			elif isFocused:
-				rowAttr = attr | curses.A_BOLD
 			else:
 				rowAttr = self._getItemAttr(iid)
+			if iid == self._focusIid and self._focused:
+				rowAttr |= curses.A_BOLD
 
-			x = innerX
-			for i, (cid, cw) in enumerate(colInfo):
+			texts = []
+			for cid, _ in colInfo:
 				if cid == '#0':
-					# tree column: indent + expand indicator + text
-					indent  = '  ' * depth
-					hasKids = bool(node.get('children'))
-					if hasKids:
+					if node.get('children'):
 						marker = '▼ ' if node.get('open') else '▶ '
 					else:
 						marker = '  '
-					cellText = indent + marker + str(node.get('text', ''))
+					texts.append('  ' * depth + marker + str(node.get('text', '')))
 				else:
-					cols = list(self._opts.get('columns') or [])
 					cidx = cols.index(cid) if cid in cols else -1
 					vals = node.get('values', [])
-					cellText = str(vals[cidx]) if 0 <= cidx < len(vals) else ''
+					texts.append(str(vals[cidx]) if 0 <= cidx < len(vals) else '')
+			cells(texts, dataY + rowIdx, rowAttr, anchors)
 
-				_addStr(scr, screenY, x, _pad(cellText, cw), rowAttr)
-				x += cw
+		if self._showInternalBar():
+			self._drawInternalBar(scr, self._x + self._w - bd - 1, dataY, visH, attr)
 
-		# Scrollbar
-		if total > visH and innerX + innerW - 1 >= innerX:
-			barX = innerX + innerW - 1
-			thumbStart = int(self._scrollY * visH / total) if total else 0
-			thumbSize  = max(1, int(visH * visH / total))
-			for i in range(visH):
-				ch = '#' if thumbStart <= i < thumbStart + thumbSize else '|'
-				try:
-					scr.addch(dataY + i, barX, ch, attr)
-				except curses.error:
-					pass
+	# ------------------------------------------------------------------
+	# Identification
+	# ------------------------------------------------------------------
+
+	def identifyRow(self, y):
+		"""Return the iid of the row at widget-relative *y* ('' if none)."""
+		i = self._scrollY + (int(y) + self._y - self._dataY())
+		flat = self._getFlat()
+		return flat[i][0] if 0 <= i < len(flat) and int(y) + self._y >= self._dataY() else ''
+
+	def identifyColumn(self, x):
+		"""Return '#n' for the column at widget-relative *x*."""
+		cx = self._border()
+		for cid, cw in self._colWidths(self._innerW()):
+			if cx <= int(x) < cx + cw:
+				if cid == '#0':
+					return '#0'
+				disp = [c for c, _ in self._colWidths(self._innerW()) if c != '#0']
+				return f'#{disp.index(cid) + 1}'
+			cx += cw
+		return ''
+
+	def identifyRegion(self, x, y):
+		if self._hasHead() and int(y) == self._border():
+			return 'heading'
+		row = self.identifyRow(y)
+		if not row:
+			return 'nothing'
+		if self.identifyColumn(x) == '#0':
+			depth = dict(self._getFlat()).get(row, 0)
+			mx    = self._border() + 2 * depth
+			if mx <= int(x) < mx + 2 and self._items[row]['children']:
+				return 'tree'
+		return 'cell'
+
+	def identify(self, component, x, y):
+		if component == 'row':
+			return self.identifyRow(y)
+		if component == 'column':
+			return self.identifyColumn(x)
+		if component == 'region':
+			return self.identifyRegion(x, y)
+		if component == 'item':
+			return self.identifyRow(y)
+		return ''
+
+	def bbox(self, item, column=None):
+		flat = self._getFlat()
+		for i, (iid, _) in enumerate(flat):
+			if iid == str(item):
+				row = i - self._scrollY
+				if not 0 <= row < self._visRows():
+					return ''
+				y = self._dataY() - self._y + row
+				if column is None:
+					return (self._border(), y, self._innerW(), 1)
+				cx = self._border()
+				cid = self._colId(column)
+				for c, cw in self._colWidths(self._innerW()):
+					if c == cid:
+						return (cx, y, cw, 1)
+					cx += cw
+				return ''
+		return ''
+
+	identify_row	= identifyRow
+	identify_column	= identifyColumn
+	identify_region	= identifyRegion
 
 	# ------------------------------------------------------------------
 	# Input
 	# ------------------------------------------------------------------
 
-	def _isFocusable(self):
-		return self._opts.get('state', 'normal') == 'normal'
-
 	def _currentFlatIndex(self):
-		flat = self._getFlat()
-		for i, (iid, _) in enumerate(flat):
+		for i, (iid, _) in enumerate(self._getFlat()):
 			if iid == self._focusIid:
 				return i
 		return 0
 
+	def _toggle(self, iid):
+		node = self._items.get(iid)
+		if not node or not node['children']:
+			return
+		node['open'] = not node['open']
+		self._flatCache = None
+		self._focusIid  = iid
+		self._fireVirtual('<<TreeviewOpen>>' if node['open'] else '<<TreeviewClose>>',
+			iid=iid)
+		self._markDirty()
+
+	def _selectRow(self, iid):
+		self._focusIid = iid
+		mode = self._opts.get('selectmode', 'extended')
+		if mode != 'none':
+			self._setSelection([iid])
+		self._markDirty()
+
 	def _handleKey(self, key):
 		flat = self._getFlat()
 		if not flat:
-			return super()._handleKey(key)
+			return False
 
-		bd      = int(self._opts.get('borderwidth') or 0)
-		show    = self._opts.get('show', 'tree headings')
-		hasHead = 'headings' in show
-		visH    = max(1, self._h - 2*bd - (1 if hasHead else 0))
-		ci      = self._currentFlatIndex()
+		visH = self._visRows()
+		ci   = self._currentFlatIndex()
 
 		if key == KEY_UP:
 			ci = max(0, ci - 1)
@@ -578,96 +729,105 @@ class Treeview(Widget):
 		elif key == KEY_HOME:
 			ci = 0
 		elif key == KEY_END:
-			ci = max(0, len(flat) - 1)
+			ci = len(flat) - 1
 		elif key == KEY_PPAGE:
 			ci = max(0, ci - visH)
 		elif key == KEY_NPAGE:
 			ci = min(len(flat) - 1, ci + visH)
 		elif key == KEY_RIGHT:
 			iid  = flat[ci][0]
-			node = self._items.get(iid, {})
-			if node.get('children') and not node.get('open'):
-				node['open'] = True
-				self._flatCache = None
-			elif node.get('children') and node.get('open'):
+			node = self._items[iid]
+			if node['children'] and not node['open']:
+				self._toggle(iid)
+				return True
+			if node['children']:
 				ci = min(len(flat) - 1, ci + 1)
 		elif key == KEY_LEFT:
 			iid  = flat[ci][0]
-			node = self._items.get(iid, {})
-			if node.get('open') and node.get('children'):
-				node['open'] = False
-				self._flatCache = None
+			node = self._items[iid]
+			if node['open'] and node['children']:
+				self._toggle(iid)
+				return True
+			parent = node['parent']
+			if parent:
+				ci = next(j for j, (p, _) in enumerate(flat) if p == parent)
+		elif key in (KEY_ENTER, KEY_SPACE):
+			iid = flat[ci][0]
+			if key == KEY_SPACE or not self._items[iid]['children']:
+				self._selectRow(iid)
 			else:
-				parent = node.get('parent', '')
-				if parent:
-					for j, (piid, _) in enumerate(self._getFlat()):
-						if piid == parent:
-							ci = j
-							break
-		elif key in (KEY_ENTER, KEY_CR, KEY_SPACE):
-			iid  = flat[ci][0]
-			node = self._items.get(iid, {})
-			if node.get('children'):
-				node['open'] = not node.get('open', False)
-				self._flatCache = None
-			self._dispatch('<<TreeviewSelect>>', _TVEvent(self, iid))
+				self._toggle(iid)
+			return True
 		else:
-			return super()._handleKey(key)
+			return False
 
-		if 0 <= ci < len(self._getFlat()):
-			newIid = self._getFlat()[ci][0]
-			self._focusIid = newIid
-			mode = self._opts.get('selectmode', 'browse')
-			if mode in ('browse', 'extended'):
-				self._sel = [newIid]
+		flat = self._getFlat()
+		if 0 <= ci < len(flat):
+			self._selectRow(flat[ci][0])
 			self._ensureVisible(ci)
-			self._dispatch('<<TreeviewSelect>>', _TVEvent(self, newIid))
-			self._markDirty()
 		return True
 
 	def _ensureVisible(self, flatIdx):
-		bd      = int(self._opts.get('borderwidth') or 0)
-		show    = self._opts.get('show', 'tree headings')
-		hasHead = 'headings' in show
-		visH    = max(1, self._h - 2*bd - (1 if hasHead else 0))
+		visH = self._visRows()
 		if flatIdx < self._scrollY:
 			self._scrollY = flatIdx
 		elif flatIdx >= self._scrollY + visH:
 			self._scrollY = flatIdx - visH + 1
+		self._clampScroll()
 
 	def _handleMouse(self, mx, my, bstate):
-		bd      = int(self._opts.get('borderwidth') or 0)
-		show    = self._opts.get('show', 'tree headings')
-		hasHead = 'headings' in show
-		dataY   = self._y + bd + (1 if hasHead else 0)
+		wheel = isWheel(bstate)
+		if wheel:
+			self._scrollY += 3 * wheel
+			self._clampScroll()
+			self._markDirty()
+			return True
+
+		press   = bool(bstate & B1_PRESS) and not (bstate & MOTION)
+		release = bool(bstate & (B1_RELEASE | B1_CLICK))
+		clicked = bool(bstate & B1_CLICK)
+		dclick  = bool(bstate & B1_DCLICK)
+		bd      = self._border()
+		dataY   = self._dataY()
+		visH    = self._visRows()
+
+		# internal scrollbar
+		if self._sbDrag is not None:
+			if bstate & MOTION or release:
+				self._barDrag(my - dataY, visH)
+			if release:
+				self._sbDrag = None
+			return True
+		if self._showInternalBar() and mx == self._x + self._w - bd - 1 and \
+				dataY <= my < dataY + visH:
+			if press or clicked:
+				self._barClick(my - dataY, visH, press)
+			return True
+
+		if not (press or clicked or dclick):
+			return False
+
+		# heading click → command
+		if self._hasHead() and my == self._y + bd:
+			col = self.identifyColumn(mx - self._x)
+			if col and (release or clicked):
+				cid = self._colId(col) if col != '#0' else '#0'
+				cmd = self._headCfg.get(cid, {}).get('command')
+				if callable(cmd):
+					cmd()
+			return True
+
 		flatIdx = self._scrollY + (my - dataY)
 		flat    = self._getFlat()
-
-		if 0 <= flatIdx < len(flat):
-			iid  = flat[flatIdx][0]
-			node = self._items.get(iid, {})
-			self._focusIid = iid
-			mode = self._opts.get('selectmode', 'browse')
-			if mode in ('browse', 'extended'):
-				self._sel = [iid]
-			elif mode == 'none':
-				pass
-			# Toggle on double-click (simulate with single click on marker column)
-			if bstate & curses.BUTTON1_CLICKED:
-				indent = 2 * flat[flatIdx][1]
-				markerX = self._x + bd + indent
-				if mx in (markerX, markerX + 1) and node.get('children'):
-					node['open'] = not node.get('open', False)
-					self._flatCache = None
-			self._dispatch('<<TreeviewSelect>>', _TVEvent(self, iid))
-			self._markDirty()
-		return False
-
-
-class _TVEvent:
-	def __init__(self, widget, iid):
-		self.widget = widget
-		self.iid    = iid
-		self.type   = 'TreeviewSelect'
-		self.char   = ''
-		self.keysym = ''
+		if not (0 <= flatIdx < len(flat)):
+			return False
+		iid, depth = flat[flatIdx]
+		if dclick:
+			self._toggle(iid)
+			return True
+		markerX = self._x + bd + 2 * depth
+		if '#0' in self._colList()[:1] and markerX <= mx < markerX + 2 and \
+				self._items[iid]['children']:
+			self._toggle(iid)
+		self._selectRow(iid)
+		return True

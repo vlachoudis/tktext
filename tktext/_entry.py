@@ -1,8 +1,9 @@
 import curses
-from ._core import Widget, _addStr, _fillRect, _drawBorder, _clip
+from ._core import TclError, Widget, _fillRect, _drawBorder, _addStr, _int
 from ._events import (KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END,
-	KEY_BACKSPACE, KEY_DC, KEY_ENTER, KEY_CR,
-	KEY_SHIFT_LEFT, KEY_SHIFT_RIGHT, KEY_SHIFT_HOME, KEY_SHIFT_END)
+	KEY_BACKSPACE, KEY_DC, KEY_SHIFT_LEFT, KEY_SHIFT_RIGHT, KEY_SHIFT_HOME,
+	KEY_SHIFT_END, B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, MOTION,
+	isPrintableKey)
 
 _SHIFT_MAP = {
 	KEY_SHIFT_LEFT:  KEY_LEFT,
@@ -11,9 +12,19 @@ _SHIFT_MAP = {
 	KEY_SHIFT_END:   KEY_END,
 }
 
+_CTRL_A	= 1	# select all
+_CTRL_E	= 5	# end of line
+_CTRL_K	= 11	# kill to end of line
+_CTRL_U	= 21	# kill to start of line
+_CTRL_W	= 23	# delete previous word
+
 
 class Entry(Widget):
-	"""Single-line text entry widget.  Mirrors tkinter.Entry."""
+	"""Single-line text entry widget.  Mirrors tkinter.Entry.
+
+	state may be 'normal', 'readonly' (focusable, selectable, not
+	editable) or 'disabled'.
+	"""
 
 	def __init__(self, parent=None, **kwargs):
 		super().__init__(parent)
@@ -28,12 +39,11 @@ class Entry(Widget):
 			'insertwidth':		1,
 			'disabledforeground':	'gray',
 			'readonlybackground':	'',
+			'xscrollcommand':	None,
 		})
 		kwargs.setdefault('relief', 'sunken')
 		kwargs.setdefault('borderwidth', 1)
 		kwargs.setdefault('width', 20)
-		if kwargs:
-			self.configure(**kwargs)
 
 		self._buf		= ''
 		self._cur		= 0	# cursor column index
@@ -41,6 +51,10 @@ class Entry(Widget):
 		self._sel		= None	# None or (start, end) with start < end
 		self._selAnchor		= None
 		self._mouseDown		= False
+		self._lastXScroll	= None
+
+		if kwargs:
+			self.configure(**kwargs)
 
 	# ------------------------------------------------------------------
 	# Buffer access (routes through textvariable when set)
@@ -58,6 +72,10 @@ class Entry(Widget):
 			tv.set(s)
 		else:
 			self._buf = s
+		self._markDirty()
+
+	def _editable(self) -> bool:
+		return self._opts.get('state', 'normal') == 'normal'
 
 	# ------------------------------------------------------------------
 	# Public API
@@ -67,44 +85,42 @@ class Entry(Widget):
 		"""Return current entry contents."""
 		return self._getBuf()
 
-	def insert(self, idx: object, s: str):
+	def insert(self, idx: object, s):
 		"""Insert *s* at position *idx* ('end' or int)."""
-		if self._opts.get('state') == 'disabled':
+		if not self._editable():
 			return
+		s   = str(s)
 		buf = self._getBuf()
 		pos = self._resolveIdx(idx, buf)
-		new = buf[:pos] + s + buf[pos:]
-		self._setBuf(new)
-		self._cur = pos + len(s)
+		self._setBuf(buf[:pos] + s + buf[pos:])
+		if self._cur >= pos:
+			self._cur += len(s)
 		self._clampCur()
 		self._scrollToCursor()
-		self._markDirty()
 
 	def delete(self, first: object, last: object = None):
 		"""Delete characters from *first* to *last* (exclusive)."""
-		if self._opts.get('state') == 'disabled':
+		if not self._editable():
 			return
 		buf  = self._getBuf()
 		pos1 = self._resolveIdx(first, buf)
-		if last is None:
-			pos2 = pos1 + 1
-		else:
-			pos2 = self._resolveIdx(last, buf)
+		pos2 = pos1 + 1 if last is None else self._resolveIdx(last, buf)
 		pos1 = max(0, min(pos1, len(buf)))
 		pos2 = max(0, min(pos2, len(buf)))
 		if pos1 > pos2:
 			pos1, pos2 = pos2, pos1
 		self._setBuf(buf[:pos1] + buf[pos2:])
-		self._cur = pos1
+		if self._cur > pos2:
+			self._cur -= pos2 - pos1
+		elif self._cur > pos1:
+			self._cur = pos1
 		self._sel = None
 		self._clampCur()
 		self._scrollToCursor()
-		self._markDirty()
 
 	def icursor(self, idx: object):
 		"""Set insertion cursor to *idx*."""
-		buf = self._getBuf()
-		self._cur = self._resolveIdx(idx, buf)
+		self._cur = self._resolveIdx(idx, self._getBuf())
 		self._clampCur()
 		self._scrollToCursor()
 		self._markDirty()
@@ -112,116 +128,151 @@ class Entry(Widget):
 	def index(self, idx: object) -> int:
 		"""Return integer index for *idx*."""
 		buf = self._getBuf()
-		return self._resolveIdx(idx, buf)
+		return max(0, min(self._resolveIdx(idx, buf), len(buf)))
 
-	def selectionRange(self, start: int, end: int):
+	def selectionRange(self, start, end):
 		"""Select from *start* to *end*."""
 		buf = self._getBuf()
-		s   = max(0, min(start, len(buf)))
-		e   = max(0, min(end, len(buf)))
+		s   = max(0, min(self._resolveIdx(start, buf), len(buf)))
+		e   = max(0, min(self._resolveIdx(end, buf), len(buf)))
 		if s > e:
 			s, e = e, s
-		self._sel = (s, e) if s != e else None
+		self._sel       = (s, e) if s != e else None
+		self._selAnchor = s
 		self._markDirty()
-
-	selection_range = selectionRange
 
 	def selectionClear(self):
 		"""Clear selection."""
 		self._sel = None
 		self._markDirty()
 
-	selection_clear = selectionClear
-
 	def selectionPresent(self) -> bool:
 		"""Return True if any text is selected."""
 		return self._sel is not None
 
-	selection_present = selectionPresent
-
-	def selectionFrom(self, idx: int):
+	def selectionFrom(self, idx):
 		"""Set selection anchor to *idx*."""
-		self._selAnchor = idx
-		if self._sel is None:
-			self._sel = (idx, idx) if False else None
+		self._selAnchor = self._resolveIdx(idx, self._getBuf())
 
-	selection_from = selectionFrom
-
-	def selectionTo(self, idx: int):
+	def selectionTo(self, idx):
 		"""Extend selection to *idx* from current anchor."""
+		b = self._resolveIdx(idx, self._getBuf())
 		if self._selAnchor is None:
-			self._selAnchor = idx
+			self._selAnchor = b
 		a = self._selAnchor
-		b = idx
-		if a <= b:
-			self._sel = (a, b) if a != b else None
-		else:
-			self._sel = (b, a) if a != b else None
+		self._sel = (min(a, b), max(a, b)) if a != b else None
 		self._markDirty()
 
-	selection_to = selectionTo
+	def selectionAdjust(self, idx):
+		self.selectionTo(idx)
+
+	def selectionGet(self) -> str:
+		if self._sel is None:
+			return ''
+		return self._getBuf()[self._sel[0]:self._sel[1]]
+
+	selection_range		= selectionRange
+	select_range		= selectionRange
+	selection_clear		= selectionClear
+	select_clear		= selectionClear
+	selection_present	= selectionPresent
+	select_present		= selectionPresent
+	selection_from		= selectionFrom
+	select_from		= selectionFrom
+	selection_to		= selectionTo
+	select_to		= selectionTo
+	selection_adjust	= selectionAdjust
+	selection_get		= selectionGet
 
 	def xview(self, *args):
-		"""Scroll view (simplified)."""
+		"""Query or change the horizontal view."""
+		buf  = self._getBuf()
+		total = max(1, len(buf))
 		if not args:
-			return
+			visW = self._visW()
+			return (self._scrollX / total, min(1.0, (self._scrollX + visW) / total))
 		if args[0] == 'moveto':
-			buf = self._getBuf()
-			frac = float(args[1])
-			self._scrollX = int(frac * max(1, len(buf)))
-			self._markDirty()
+			self._scrollX = int(float(args[1]) * total)
 		elif args[0] == 'scroll':
 			n = int(args[1])
-			self._scrollX = max(0, self._scrollX + n)
-			self._markDirty()
+			if len(args) > 2 and args[2] == 'pages':
+				n *= self._visW()
+			self._scrollX += n
+		else:
+			self._scrollX = self._resolveIdx(args[0], buf)
+		self._scrollX = max(0, min(self._scrollX, len(buf)))
+		self._markDirty()
+		return None
+
+	def xview_moveto(self, fraction):
+		self.xview('moveto', fraction)
+
+	def xview_scroll(self, number, what):
+		self.xview('scroll', number, what)
 
 	# ------------------------------------------------------------------
 	# Preferred size / cursor position
 	# ------------------------------------------------------------------
 
 	def _preferredSize(self):
-		bd  = int(self._opts.get('borderwidth') or 0)
-		ow  = int(self._opts.get('width') or 20)
+		bd = self._cfgBorder()
+		ow = _int(self._opts.get('width'), 20) or 20
 		return (ow + 2*bd, 1 + 2*bd)
+
+	def _visW(self) -> int:
+		return max(1, self._w - 2*self._border())
 
 	def _cursorPos(self):
 		"""Return screen (y, x) for the cursor block."""
-		bd = int(self._opts.get('borderwidth') or 0)
-		return (self._y + bd, self._x + bd + self._cur - self._scrollX)
+		if self._opts.get('state') != 'normal':
+			return None
+		self._clampCur()
+		bd = self._border()
+		return (self._y + bd + (self._h - 2*bd - 1) // 2,
+			self._x + bd + self._cur - self._scrollX)
 
 	# ------------------------------------------------------------------
 	# Internal helpers
 	# ------------------------------------------------------------------
 
 	def _resolveIdx(self, idx, buf: str) -> int:
-		if idx == 'end' or idx == 'END':
+		if isinstance(idx, int):
+			return idx
+		s = str(idx)
+		if s in ('end', 'END'):
 			return len(buf)
-		if idx == 'insert':
+		if s == 'insert':
 			return self._cur
-		if idx == 'anchor':
+		if s == 'anchor':
 			return self._selAnchor or 0
-		if idx == 'sel.first':
-			return self._sel[0] if self._sel else 0
-		if idx == 'sel.last':
-			return self._sel[1] if self._sel else 0
+		if s == 'sel.first':
+			if not self._sel:
+				raise TclError('selection isn\'t in widget')
+			return self._sel[0]
+		if s == 'sel.last':
+			if not self._sel:
+				raise TclError('selection isn\'t in widget')
+			return self._sel[1]
+		if s.startswith('@'):
+			bd = self._border()
+			return self._scrollX + _int(s[1:]) - bd
 		try:
-			return int(idx)
-		except (TypeError, ValueError):
+			return int(s)
+		except ValueError:
 			return 0
 
 	def _clampCur(self):
-		buf = self._getBuf()
-		self._cur = max(0, min(self._cur, len(buf)))
+		self._cur = max(0, min(self._cur, len(self._getBuf())))
 
 	def _scrollToCursor(self):
 		if self._w <= 0:
 			return
-		bd   = int(self._opts.get('borderwidth') or 0)
-		visW = max(1, self._w - 2*bd)
+		visW = self._visW()
 		if self._cur < self._scrollX:
 			self._scrollX = self._cur
 		elif self._cur >= self._scrollX + visW:
 			self._scrollX = self._cur - visW + 1
+		self._scrollX = max(0, self._scrollX)
 
 	def _deleteSelection(self) -> bool:
 		"""Delete selected text; return True if anything was deleted."""
@@ -235,37 +286,50 @@ class Entry(Widget):
 		self._selAnchor = None
 		return True
 
+	def _preRender(self):
+		self._clampCur()
+		buf = self._getBuf()
+		if self._sel is not None:
+			s, e = self._sel
+			e = min(e, len(buf))
+			self._sel = (s, e) if s < e else None
+		self._scrollToCursor()
+		cmd = self._opts.get('xscrollcommand')
+		if callable(cmd):
+			first, last = self.xview()
+			if self._lastXScroll != (first, last):
+				self._lastXScroll = (first, last)
+				cmd(first, last)
+
 	# ------------------------------------------------------------------
 	# Rendering
 	# ------------------------------------------------------------------
 
 	def render(self, scr):
-		if self._w <= 0 or self._h <= 0:
+		if not self._isMapped():
 			return
 
 		state  = self._opts.get('state', 'normal')
-		focused = self._focused
-		bd     = int(self._opts.get('borderwidth') or 0)
+		bd     = self._border()
 		relief = self._opts.get('relief', 'sunken')
 
 		if state == 'disabled':
-			attr = self._getAttr(fg='gray')
+			attr = self._getAttr(fg=self._opts.get('disabledforeground') or 'gray')
+		elif state == 'readonly' and self._opts.get('readonlybackground'):
+			attr = self._getAttr(bg=self._opts.get('readonlybackground'))
 		else:
 			attr = self._getAttr()
 
 		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
-		if bd > 0:
+		if bd > 0 and relief != 'flat':
 			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
 
-		visW = max(1, self._w - 2*bd)
+		visW = self._visW()
 		buf  = self._getBuf()
 		show = self._opts.get('show') or ''
-		if show:
-			disp = show * len(buf)
-		else:
-			disp = buf
+		disp = show[0] * len(buf) if show else buf
 
-		screenY = self._y + bd
+		screenY = self._y + bd + (self._h - 2*bd - 1) // 2
 		screenX = self._x + bd
 
 		selAttr = attr | curses.A_REVERSE
@@ -274,41 +338,40 @@ class Entry(Widget):
 		if sfg or sbg:
 			selAttr = self._getAttr(fg=sfg, bg=sbg)
 
-		for j in range(visW):
-			col   = self._scrollX + j
-			inSel = (self._sel is not None and
-				self._sel[0] <= col < self._sel[1])
-			if col < len(disp):
-				ch    = disp[col]
-				cAttr = selAttr if inSel else attr
-			else:
-				ch    = ' '
-				cAttr = selAttr if inSel else attr
-			try:
-				scr.addch(screenY, screenX + j, ch, cAttr)
-			except curses.error:
-				pass
+		vis = disp[self._scrollX:self._scrollX + visW].ljust(visW)
+		if self._sel is None:
+			_addStr(scr, screenY, screenX, vis, attr)
+			return
+		s = max(0, self._sel[0] - self._scrollX)
+		e = max(0, min(visW, self._sel[1] - self._scrollX))
+		_addStr(scr, screenY, screenX, vis[:s], attr)
+		_addStr(scr, screenY, screenX + s, vis[s:e], selAttr)
+		_addStr(scr, screenY, screenX + e, vis[e:], attr)
 
 	# ------------------------------------------------------------------
 	# Focus
 	# ------------------------------------------------------------------
 
 	def _isFocusable(self) -> bool:
-		return self._opts.get('state', 'normal') == 'normal'
+		tf = self._opts.get('takefocus', True)
+		return (tf not in (False, 0, '0', '') and
+			self._opts.get('state', 'normal') in ('normal', 'readonly'))
 
 	# ------------------------------------------------------------------
 	# Keyboard input
 	# ------------------------------------------------------------------
 
 	def _handleKey(self, key: int) -> bool:
-		if self._opts.get('state') == 'disabled':
+		state = self._opts.get('state', 'normal')
+		if state == 'disabled':
 			return False
+		editable = state == 'normal'
 
-		buf   = self._getBuf()
-		c     = self._cur
+		buf = self._getBuf()
+		self._clampCur()
+		c   = self._cur
 
-		# Ctrl+A — select all
-		if key == 1:
+		if key == _CTRL_A:
 			self._selAnchor = 0
 			self._sel       = (0, len(buf)) if buf else None
 			self._markDirty()
@@ -317,69 +380,69 @@ class Entry(Widget):
 		# Shift+movement — extend selection
 		extendSel = key in _SHIFT_MAP
 		if extendSel:
-			if self._selAnchor is None:
+			if self._sel is None or self._selAnchor is None:
 				self._selAnchor = c
 			key = _SHIFT_MAP[key]
+
+		if key == _CTRL_E:
+			key = KEY_END
 
 		if key == KEY_LEFT:
 			if not extendSel and self._sel:
 				c = self._sel[0]	# collapse to start
-				self._sel       = None
-				self._selAnchor = None
 			elif c > 0:
 				c -= 1
 		elif key == KEY_RIGHT:
 			if not extendSel and self._sel:
 				c = self._sel[1]	# collapse to end
-				self._sel       = None
-				self._selAnchor = None
 			elif c < len(buf):
 				c += 1
 		elif key == KEY_HOME:
 			c = 0
 		elif key == KEY_END:
 			c = len(buf)
-		elif key in (KEY_BACKSPACE, 127):
-			if not self._deleteSelection():
-				if c > 0:
-					self._setBuf(buf[:c-1] + buf[c:])
-					c -= 1
-			else:
-				buf = self._getBuf()
-				c   = self._cur
-		elif key == KEY_DC:
-			if not self._deleteSelection():
-				if c < len(buf):
-					self._setBuf(buf[:c] + buf[c+1:])
-			else:
+		elif not editable:
+			return False
+		elif key == KEY_BACKSPACE:
+			if self._deleteSelection():
 				c = self._cur
-		elif key in (KEY_ENTER, KEY_CR):
-			self._dispatch('<Return>', _make_key_event(key, self))
-			self._markDirty()
-			return True
-		elif 32 <= key <= 126:
+			elif c > 0:
+				self._setBuf(buf[:c-1] + buf[c:])
+				c -= 1
+		elif key == KEY_DC:
+			if self._deleteSelection():
+				c = self._cur
+			elif c < len(buf):
+				self._setBuf(buf[:c] + buf[c+1:])
+		elif key == _CTRL_K:
+			self._setBuf(buf[:c])
+		elif key == _CTRL_U:
+			self._setBuf(buf[c:])
+			c = 0
+		elif key == _CTRL_W:
+			i = c
+			while i > 0 and buf[i-1] == ' ':
+				i -= 1
+			while i > 0 and buf[i-1] != ' ':
+				i -= 1
+			self._setBuf(buf[:i] + buf[c:])
+			c = i
+		elif isPrintableKey(key):
 			self._deleteSelection()
 			buf = self._getBuf()
 			c   = self._cur
-			ch  = chr(key)
-			self._setBuf(buf[:c] + ch + buf[c:])
+			self._setBuf(buf[:c] + chr(key) + buf[c:])
 			c += 1
 		else:
-			return super()._handleKey(key)
+			return False
 
-		# Update selection for shift+movement
+		# Update selection
 		if extendSel:
 			a = self._selAnchor
-			if a == c:
-				self._sel = None
-			elif a < c:
-				self._sel = (a, c)
-			else:
-				self._sel = (c, a)
+			self._sel = (min(a, c), max(a, c)) if a != c else None
 		elif key in (KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END):
-			if not extendSel:
-				self._sel       = None
-				self._selAnchor = None
+			self._sel       = None
+			self._selAnchor = None
 
 		self._cur = c
 		self._clampCur()
@@ -392,63 +455,42 @@ class Entry(Widget):
 	# ------------------------------------------------------------------
 
 	def _handleMouse(self, mx: int, my: int, bstate: int) -> bool:
-		bd = int(self._opts.get('borderwidth') or 0)
+		bd      = self._border()
+		release = bool(bstate & (B1_RELEASE | B1_CLICK))
+		press   = bool(bstate & B1_PRESS) and not (bstate & MOTION)
+		motion  = bool(bstate & MOTION) or (bool(bstate & B1_PRESS) and self._mouseDown)
 
-		release = bool(bstate & (curses.BUTTON1_RELEASED | curses.BUTTON1_CLICKED))
-		press   = bool(bstate & curses.BUTTON1_PRESSED)
+		if not (press or release or motion or bstate & B1_DCLICK):
+			return False
 
-		if release:
-			self._mouseDown = False
-
-		onBorder = (mx < self._x + bd or mx >= self._x + self._w - bd or
-			my < self._y + bd or my >= self._y + self._h - bd)
-		if onBorder:
-			if release and self._selAnchor is not None:
-				mx = max(self._x + bd, min(mx, self._x + self._w - bd - 1))
-			else:
-				return False
-
-		col = self._scrollX + (mx - self._x - bd)
 		buf = self._getBuf()
-		col = max(0, min(col, len(buf)))
+		mx  = max(self._x + bd, min(mx, self._x + self._w - bd - 1))
+		col = max(0, min(self._scrollX + (mx - self._x - bd), len(buf)))
 
-		if press and not self._mouseDown:
-			self._mouseDown = True
+		if bstate & B1_DCLICK:
+			# select the word under the pointer
+			s = e = min(col, len(buf))
+			while s > 0 and not buf[s-1].isspace():
+				s -= 1
+			while e < len(buf) and not buf[e].isspace():
+				e += 1
+			self._sel       = (s, e) if s < e else None
+			self._selAnchor = s
+			self._cur       = e
+			self._mouseDown = False
+		elif (press or bstate & B1_CLICK) and not self._mouseDown:
+			self._mouseDown = not (bstate & B1_CLICK)
 			self._sel       = None
 			self._selAnchor = col
 			self._cur       = col
 		elif self._mouseDown:
-			if self._selAnchor is not None:
-				a = self._selAnchor
-				if a != col:
-					if a < col:
-						self._sel = (a, col)
-					else:
-						self._sel = (col, a)
-				else:
-					self._sel = None
+			a = self._selAnchor if self._selAnchor is not None else col
+			self._sel = (min(a, col), max(a, col)) if a != col else None
+			self._cur = col
 			if release:
-				self._selAnchor = None
+				self._mouseDown = False
 
-		self._cur = col
 		self._clampCur()
 		self._scrollToCursor()
 		self._markDirty()
 		return True
-
-
-# ---------------------------------------------------------------------------
-# Helper: minimal key event object
-# ---------------------------------------------------------------------------
-
-class _EntryKeyEvent:
-	def __init__(self, key, widget):
-		self.widget  = widget
-		self.keycode = key
-		self.keysym  = 'Return'
-		self.char    = ''
-		self.type    = 'KeyPress'
-
-
-def _make_key_event(key, widget):
-	return _EntryKeyEvent(key, widget)

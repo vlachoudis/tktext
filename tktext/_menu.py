@@ -1,13 +1,30 @@
 import curses
-from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad
-from ._events import (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT,
-	KEY_ENTER, KEY_CR, KEY_ESC)
+from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad, _sameValue
+from ._events import (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END,
+	KEY_ENTER, KEY_CR, KEY_ESC, KEY_SPACE, MOTION, B1_PRESS, B1_RELEASE,
+	B1_CLICK, B1_DCLICK, isWheel)
+
+
+_ITEM_DEFAULTS = {
+	'label':	'',
+	'command':	None,
+	'state':	'normal',
+	'accelerator':	'',
+	'underline':	-1,
+	'menu':		None,
+	'variable':	None,
+	'value':	None,
+	'onvalue':	1,
+	'offvalue':	0,
+}
 
 
 class Menu(Widget):
 	"""Popup / menubar menu widget.  Mirrors tkinter.Menu.
 
 	Not laid out via pack/grid/place — overlays the screen when posted.
+	A Menu given to root.configure(menu=…) is drawn as a menubar on the
+	title row.
 	"""
 
 	def __init__(self, parent=None, **kwargs):
@@ -17,8 +34,10 @@ class Menu(Widget):
 			'activebackground':	'',
 			'disabledforeground':	'gray',
 			'tearoff':		0,
+			'postcommand':		None,
+			'takefocus':		False,
 		})
-		kwargs.setdefault('relief', 'solid')
+		kwargs.setdefault('relief', 'single')
 		kwargs.setdefault('borderwidth', 1)
 		if kwargs:
 			self.configure(**kwargs)
@@ -29,6 +48,7 @@ class Menu(Widget):
 		self._postX       = 0
 		self._postY       = 0
 		self._parentMenu  = None	# set when used as cascade submenu
+		self._fromMenuBar = False	# posted as a menubar drop-down
 
 	# ------------------------------------------------------------------
 	# Focus override — menus don't participate in tab focus
@@ -41,45 +61,43 @@ class Menu(Widget):
 	# Item addition
 	# ------------------------------------------------------------------
 
-	def add(self, itemType: str, **kwargs):
+	def _makeItem(self, itemType, kwargs):
+		item = dict(_ITEM_DEFAULTS)
+		item.update(kwargs)
+		item['type'] = itemType
+		if itemType == 'radiobutton' and item['value'] is None:
+			item['value'] = item['label']
+		sub = item.get('menu')
+		if itemType == 'cascade' and sub is not None:
+			sub._parentMenu = self
+		return item
+
+	def add(self, itemType: str, cnf=None, **kwargs):
 		"""Add an item of *itemType* ('command', 'separator', etc.)."""
-		item = {
-			'type':		itemType,
-			'label':	kwargs.get('label', ''),
-			'command':	kwargs.get('command', None),
-			'state':	kwargs.get('state', 'normal'),
-			'accelerator':	kwargs.get('accelerator', ''),
-			'underline':	kwargs.get('underline', -1),
-			'menu':		kwargs.get('menu', None),
-			'variable':	kwargs.get('variable', None),
-			'value':	kwargs.get('value', ''),
-			'onvalue':	kwargs.get('onvalue', 1),
-			'offvalue':	kwargs.get('offvalue', 0),
-		}
-		self._items.append(item)
+		if cnf:
+			kwargs.update(cnf)
+		self._items.append(self._makeItem(itemType, kwargs))
 		self._markDirty()
 
-	def add_command(self, **kwargs):
-		self.add('command', **kwargs)
+	def add_command(self, cnf=None, **kwargs):
+		self.add('command', cnf, **kwargs)
 
-	def add_separator(self, **kwargs):
-		self.add('separator', **kwargs)
+	def add_separator(self, cnf=None, **kwargs):
+		self.add('separator', cnf, **kwargs)
 
-	def add_cascade(self, **kwargs):
-		if 'menu' in kwargs and kwargs['menu'] is not None:
-			kwargs['menu']._parentMenu = self
-		self.add('cascade', **kwargs)
+	def add_cascade(self, cnf=None, **kwargs):
+		self.add('cascade', cnf, **kwargs)
 
-	def add_checkbutton(self, **kwargs):
-		self.add('checkbutton', **kwargs)
+	def add_checkbutton(self, cnf=None, **kwargs):
+		self.add('checkbutton', cnf, **kwargs)
 
-	def add_radiobutton(self, **kwargs):
-		self.add('radiobutton', **kwargs)
+	def add_radiobutton(self, cnf=None, **kwargs):
+		self.add('radiobutton', cnf, **kwargs)
 
 	# camelCase aliases
-	addCommand    = add_command
-	addSeparator  = add_separator
-	addCascade    = add_cascade
+	addCommand     = add_command
+	addSeparator   = add_separator
+	addCascade     = add_cascade
 	addCheckbutton = add_checkbutton
 	addRadiobutton = add_radiobutton
 
@@ -92,42 +110,56 @@ class Menu(Widget):
 		i1 = self._resolveIndex(index1)
 		if i1 < 0 or i1 >= len(self._items):
 			return
-		if index2 is None:
-			del self._items[i1]
-		else:
-			i2 = self._resolveIndex(index2)
-			i2 = min(i2, len(self._items) - 1)
-			del self._items[i1:i2+1]
+		i2 = i1 if index2 is None else min(self._resolveIndex(index2),
+			len(self._items) - 1)
+		del self._items[i1:i2 + 1]
+		if self._active >= len(self._items):
+			self._active = self._firstSelectable()
 		self._markDirty()
 
-	def insert(self, idx: object, itemType: str, **kwargs):
+	def insert(self, idx: object, itemType: str, cnf=None, **kwargs):
 		"""Insert a new item before position *idx*."""
+		if cnf:
+			kwargs.update(cnf)
 		i = self._resolveIndex(idx)
-		item = {
-			'type':		itemType,
-			'label':	kwargs.get('label', ''),
-			'command':	kwargs.get('command', None),
-			'state':	kwargs.get('state', 'normal'),
-			'accelerator':	kwargs.get('accelerator', ''),
-			'underline':	kwargs.get('underline', -1),
-			'menu':		kwargs.get('menu', None),
-			'variable':	kwargs.get('variable', None),
-			'value':	kwargs.get('value', ''),
-			'onvalue':	kwargs.get('onvalue', 1),
-			'offvalue':	kwargs.get('offvalue', 0),
-		}
-		self._items.insert(max(0, i), item)
+		if i < 0:
+			i = len(self._items)
+		self._items.insert(i, self._makeItem(itemType, kwargs))
 		self._markDirty()
 
-	def entryconfig(self, index: object, **kwargs):
+	def insert_command(self, index, cnf=None, **kw):
+		self.insert(index, 'command', cnf, **kw)
+
+	def insert_separator(self, index, cnf=None, **kw):
+		self.insert(index, 'separator', cnf, **kw)
+
+	def insert_cascade(self, index, cnf=None, **kw):
+		self.insert(index, 'cascade', cnf, **kw)
+
+	def insert_checkbutton(self, index, cnf=None, **kw):
+		self.insert(index, 'checkbutton', cnf, **kw)
+
+	def insert_radiobutton(self, index, cnf=None, **kw):
+		self.insert(index, 'radiobutton', cnf, **kw)
+
+	def entryconfig(self, index: object, cnf=None, **kwargs):
 		"""Configure item at *index*."""
+		if cnf:
+			kwargs.update(cnf)
 		i = self._resolveIndex(index)
 		if 0 <= i < len(self._items):
+			if not kwargs:
+				return dict(self._items[i])
 			self._items[i].update(kwargs)
+			sub = kwargs.get('menu')
+			if sub is not None:
+				sub._parentMenu = self
 			self._markDirty()
+		return None
 
 	entryconfigure = entryconfig
 	entry_config   = entryconfig
+	entryConfig    = entryconfig
 
 	def entrycget(self, index: object, option: str):
 		"""Return value of *option* for item at *index*."""
@@ -136,9 +168,12 @@ class Menu(Widget):
 			return self._items[i].get(option)
 		return None
 
-	def index(self, idx: object) -> int:
-		"""Return integer index for *idx*."""
-		return self._resolveIndex(idx)
+	entryCget = entrycget
+
+	def index(self, idx: object):
+		"""Return integer index for *idx* (None for 'none')."""
+		i = self._resolveIndex(idx)
+		return None if i < 0 else i
 
 	def type(self, idx: object) -> str:
 		"""Return type string for item at *idx*."""
@@ -153,14 +188,20 @@ class Menu(Widget):
 
 	def post(self, x: int, y: int):
 		"""Display menu at screen position (x, y)."""
-		self._postX  = x
-		self._postY  = y
+		cmd = self._opts.get('postcommand')
+		if callable(cmd):
+			cmd()
+		self._postX  = int(x)
+		self._postY  = int(y)
 		self._posted = True
-		self._active = self._firstSelectable()
+		if not (0 <= self._active < len(self._items)) or \
+				not self._selectable(self._active):
+			self._active = self._firstSelectable()
 		app = self._getApp()
 		if app is not None and hasattr(app, '_postedMenus'):
-			if self not in app._postedMenus:
-				app._postedMenus.append(self)
+			if self in app._postedMenus:
+				app._postedMenus.remove(self)
+			app._postedMenus.append(self)
 		self._markDirty()
 
 	def unpost(self):
@@ -170,73 +211,78 @@ class Menu(Widget):
 			sub = item.get('menu')
 			if sub is not None and sub._posted:
 				sub.unpost()
-		self._posted = False
+		self._posted      = False
+		self._fromMenuBar = False
 		app = self._getApp()
 		if app is not None and hasattr(app, '_postedMenus'):
 			if self in app._postedMenus:
 				app._postedMenus.remove(self)
 		self._markDirty()
 
-	def tk_popup(self, x: int, y: int, entry: int = 0):
+	def tk_popup(self, x: int, y: int, entry: object = None):
 		"""Post menu at (x, y). Mirrors tkinter.Menu.tk_popup."""
 		self.post(x, y)
+		if entry not in (None, ''):
+			i = self._resolveIndex(entry)
+			if self._selectable(i):
+				self._active = i
+
+	tkPopup = tk_popup
+
+	def activate(self, idx):
+		i = self._resolveIndex(idx)
+		self._active = i if self._selectable(i) else -1
+		self._markDirty()
 
 	def invoke(self, idx: object):
 		"""Invoke the item at *idx*."""
 		i = self._resolveIndex(idx)
 		if not (0 <= i < len(self._items)):
-			return
+			return None
 		item  = self._items[i]
 		itype = item['type']
-		state = item.get('state', 'normal')
-		if state == 'disabled':
-			return
+		if item.get('state', 'normal') == 'disabled' or itype == 'separator':
+			return None
 
 		if itype == 'cascade':
-			sub = item.get('menu')
-			if sub is not None:
-				# compute position of submenu (to the right of this menu)
-				mw = self._menuWidth()
-				mh = self._menuHeight()
-				px = self._postX
-				py = self._postY
-				app = self._getApp()
-				if app is not None:
-					if px + mw > app._w:
-						px = max(0, app._w - mw)
-					if py + mh > app._h:
-						py = max(0, app._h - mh)
-				subX = px + mw
-				subY = py + 1 + i	# border + item offset
-				sub.post(subX, subY)
-		elif itype == 'checkbutton':
-			v        = item.get('variable')
-			onvalue  = item.get('onvalue', 1)
-			offvalue = item.get('offvalue', 0)
+			self._openCascade(i)
+			return None
+		if itype == 'checkbutton':
+			v = item.get('variable')
 			if v is not None:
-				if v.get() == onvalue:
-					v.set(offvalue)
+				if _sameValue(v.get(), item.get('onvalue', 1)):
+					v.set(item.get('offvalue', 0))
 				else:
-					v.set(onvalue)
-			self._closeAll()
-			cmd = item.get('command')
-			if callable(cmd):
-				cmd()
+					v.set(item.get('onvalue', 1))
 		elif itype == 'radiobutton':
-			v     = item.get('variable')
-			value = item.get('value', '')
+			v = item.get('variable')
 			if v is not None:
-				v.set(value)
-			self._closeAll()
-			cmd = item.get('command')
-			if callable(cmd):
-				cmd()
-		else:
-			# command
-			cmd = item.get('command')
-			self._closeAll()
-			if callable(cmd):
-				cmd()
+				v.set(item.get('value'))
+		self._closeAll()
+		cmd = item.get('command')
+		if callable(cmd):
+			return cmd()
+		return None
+
+	def _openCascade(self, i):
+		item = self._items[i]
+		sub  = item.get('menu')
+		if sub is None:
+			return
+		# close sibling cascades
+		for j, other in enumerate(self._items):
+			o = other.get('menu')
+			if j != i and o is not None and o._posted:
+				o.unpost()
+		px, py, mw, _ = self._screenRect()
+		bd   = self._border()
+		subX = px + mw
+		app  = self._getApp()
+		if app is not None and subX + sub._menuWidth() > app._w:
+			subX = max(0, px - sub._menuWidth())
+		sub._parentMenu = self
+		sub.post(subX, py + bd + i - sub._border())
+		self._active = i
 
 	# ------------------------------------------------------------------
 	# Geometry helpers
@@ -244,27 +290,38 @@ class Menu(Widget):
 
 	def _menuWidth(self) -> int:
 		"""Return total menu width including borders."""
-		bd  = int(self._opts.get('borderwidth') or 0)
+		bd   = self._border()
 		maxW = 0
 		for item in self._items:
 			if item['type'] == 'separator':
 				continue
-			label = item.get('label', '')
-			accel = item.get('accelerator', '')
-			itype = item['type']
-			prefix = 0
-			if itype in ('checkbutton', 'radiobutton'):
-				prefix = 4
-			suffix = 3 if itype == 'cascade' else 0	# ' ▶'
-			accelW = len(accel) + 1 if accel else 0
-			w = prefix + len(label) + accelW + 2 + suffix
+			label  = str(item.get('label', ''))
+			accel  = str(item.get('accelerator', '') or '')
+			itype  = item['type']
+			prefix = 4 if itype in ('checkbutton', 'radiobutton') else 0
+			suffix = 2 if itype == 'cascade' else 0	# ' ▶'
+			accelW = len(accel) + 2 if accel else 0
+			w = prefix + len(label) + accelW + suffix + 2
 			maxW = max(maxW, w)
 		return max(maxW, 4) + 2*bd
 
 	def _menuHeight(self) -> int:
 		"""Return total menu height including borders."""
-		bd = int(self._opts.get('borderwidth') or 0)
-		return len(self._items) + 2*bd
+		return len(self._items) + 2*self._border()
+
+	def _screenRect(self):
+		"""Return (x, y, w, h) where the menu is drawn (clamped to screen)."""
+		mw  = self._menuWidth()
+		mh  = self._menuHeight()
+		px  = self._postX
+		py  = self._postY
+		app = self._getApp()
+		if app is not None:
+			if px + mw > app._w:
+				px = max(0, app._w - mw)
+			if py + mh > app._h:
+				py = max(0, app._h - mh)
+		return px, py, mw, mh
 
 	# ------------------------------------------------------------------
 	# Index resolution
@@ -275,14 +332,26 @@ class Menu(Widget):
 			return len(self._items) - 1
 		if idx == 'active':
 			return self._active
-		if idx == 'none':
+		if idx in ('none', None, ''):
 			return -1
 		if isinstance(idx, int):
-			return idx
-		# string label match
+			return idx if idx >= 0 else -1
 		if isinstance(idx, str):
+			if idx.isdigit():
+				return int(idx)
+			if idx.startswith('@'):
+				try:
+					y = int(idx[1:])
+				except ValueError:
+					return -1
+				_, py, _, _ = self._screenRect()
+				return y - py - self._border()
 			for i, item in enumerate(self._items):
 				if item.get('label') == idx:
+					return i
+			# tkinter also accepts a glob-style pattern; use prefix match
+			for i, item in enumerate(self._items):
+				if str(item.get('label', '')).startswith(idx):
 					return i
 		return -1
 
@@ -290,46 +359,52 @@ class Menu(Widget):
 	# Navigation helpers
 	# ------------------------------------------------------------------
 
+	def _selectable(self, i) -> bool:
+		if not (0 <= i < len(self._items)):
+			return False
+		item = self._items[i]
+		return item['type'] != 'separator' and item.get('state', 'normal') != 'disabled'
+
 	def _firstSelectable(self) -> int:
-		for i, item in enumerate(self._items):
-			if item['type'] != 'separator' and item.get('state', 'normal') != 'disabled':
+		for i in range(len(self._items)):
+			if self._selectable(i):
 				return i
 		return -1
 
-	def _nextSelectable(self, current: int) -> int:
+	def _step(self, current: int, delta: int) -> int:
 		n = len(self._items)
 		if n == 0:
 			return -1
-		i = (current + 1) % n
-		start = i
-		while True:
-			item = self._items[i]
-			if item['type'] != 'separator' and item.get('state', 'normal') != 'disabled':
+		i = current
+		for _ in range(n):
+			i = (i + delta) % n
+			if self._selectable(i):
 				return i
-			i = (i + 1) % n
-			if i == start:
-				return current
+		return current
+
+	def _nextSelectable(self, current: int) -> int:
+		return self._step(current, +1)
 
 	def _prevSelectable(self, current: int) -> int:
-		n = len(self._items)
-		if n == 0:
-			return -1
-		i = (current - 1) % n
-		start = i
-		while True:
-			item = self._items[i]
-			if item['type'] != 'separator' and item.get('state', 'normal') != 'disabled':
-				return i
-			i = (i - 1) % n
-			if i == start:
-				return current
+		return self._step(current, -1)
 
 	def _closeAll(self):
-		"""Close this menu and all ancestors."""
+		"""Close this menu, its ancestors and every other posted menu."""
 		m = self
 		while m is not None:
 			m.unpost()
 			m = m._parentMenu
+		app = self._getApp()
+		if app is not None and hasattr(app, '_closeMenus'):
+			app._closeMenus()
+
+	def _inMenuBarChain(self) -> bool:
+		m = self
+		while m is not None:
+			if m._fromMenuBar:
+				return True
+			m = m._parentMenu
+		return False
 
 	# ------------------------------------------------------------------
 	# Rendering
@@ -338,29 +413,17 @@ class Menu(Widget):
 	def render(self, scr):
 		if not self._posted:
 			return
-		if self._w < 0 or self._h < 0:
-			return
 
-		app = self._getApp()
-		mw  = self._menuWidth()
-		mh  = self._menuHeight()
-		bd  = int(self._opts.get('borderwidth') or 0)
-		px  = self._postX
-		py  = self._postY
-
-		# Clamp to screen
-		if app is not None:
-			if px + mw > app._w:
-				px = max(0, app._w - mw)
-			if py + mh > app._h:
-				py = max(0, app._h - mh)
-
+		px, py, mw, mh = self._screenRect()
+		bd     = self._border()
 		innerW = max(1, mw - 2*bd)
 		attr   = self._getAttr()
 
 		_fillRect(scr, py, px, mh, mw, attr=attr)
 		if bd > 0:
-			_drawBorder(scr, py, px, mh, mw, 'single', attr)
+			relief = self._opts.get('relief', 'single')
+			_drawBorder(scr, py, px, mh, mw,
+				relief if relief in ('single', 'double') else 'single', attr)
 
 		afg = self._opts.get('activeforeground') or ''
 		abg = self._opts.get('activebackground') or ''
@@ -369,124 +432,141 @@ class Menu(Widget):
 			iy    = py + bd + i
 			ix    = px + bd
 			itype = item['type']
-			state = item.get('state', 'normal')
 
 			if itype == 'separator':
 				_addStr(scr, iy, ix, '─' * innerW, attr)
 				continue
 
-			active  = (i == self._active)
-			disabled = (state == 'disabled')
-
-			if disabled:
+			if item.get('state', 'normal') == 'disabled':
 				rowAttr = self._getAttr(fg=self._opts.get('disabledforeground') or 'gray')
-			elif active:
+			elif i == self._active:
 				rowAttr = self._getAttr(fg=afg, bg=abg, reverse=not (afg or abg))
 			else:
 				rowAttr = attr
 
-			# Build label string
-			label = item.get('label', '')
-			accel = item.get('accelerator', '')
+			label = ' ' + str(item.get('label', ''))
+			accel = str(item.get('accelerator', '') or '')
 
 			if itype == 'checkbutton':
-				v = item.get('variable')
-				onvalue = item.get('onvalue', 1)
-				checked = (v is not None and v.get() == onvalue)
-				prefix  = '[X] ' if checked else '[ ] '
+				v       = item.get('variable')
+				checked = v is not None and _sameValue(v.get(), item.get('onvalue', 1))
+				label   = ' ' + ('[X] ' if checked else '[ ] ') + label[1:]
 			elif itype == 'radiobutton':
-				v     = item.get('variable')
-				value = item.get('value', '')
-				sel   = (v is not None and v.get() == value)
-				prefix = '(*) ' if sel else '( ) '
-			else:
-				prefix = ''
+				v      = item.get('variable')
+				sel    = v is not None and _sameValue(v.get(), item.get('value'))
+				label  = ' ' + ('(*) ' if sel else '( ) ') + label[1:]
 
+			right = (accel + ' ') if accel else ''
 			if itype == 'cascade':
-				suffix = ' ▶'	# ' ▶'
-			else:
-				suffix = ''
-
-			if accel:
-				# right-pad label, right-align accelerator
-				labelPart = prefix + label
-				rightPart = accel + suffix
-				gap       = max(1, innerW - len(labelPart) - len(rightPart))
-				row       = labelPart + ' ' * gap + rightPart
-			else:
-				row = prefix + label + suffix
+				right += '▶'
+			gap = max(1, innerW - len(label) - len(right))
+			row = label + ' ' * gap + right if right else label
 
 			_addStr(scr, iy, ix, _pad(row, innerW, 'left'), rowAttr)
 
-		# Render open submenus
-		for item in self._items:
-			sub = item.get('menu')
-			if sub is not None and sub._posted:
-				sub.render(scr)
+			ul = item.get('underline', -1)
+			if isinstance(ul, int) and 0 <= ul < len(str(item.get('label', ''))):
+				off = 1 + (4 if itype in ('checkbutton', 'radiobutton') else 0) + ul
+				if off < innerW:
+					_addStr(scr, iy, ix + off, row[off], rowAttr | curses.A_UNDERLINE)
 
 	# ------------------------------------------------------------------
-	# Key input
+	# Key input — a posted menu grabs the keyboard
 	# ------------------------------------------------------------------
 
 	def _handleKey(self, key: int) -> bool:
 		if not self._posted:
 			return False
+		app = self._getApp()
 
-		if key == KEY_UP:
-			self._active = self._prevSelectable(self._active)
-			self._markDirty()
-			return True
-		elif key == KEY_DOWN:
-			self._active = self._nextSelectable(self._active)
-			self._markDirty()
-			return True
-		elif key in (KEY_ENTER, KEY_CR):
-			if self._active >= 0:
+		if key in (KEY_UP, KEY_DOWN):
+			self._active = self._step(self._active, -1 if key == KEY_UP else 1)
+		elif key == KEY_HOME:
+			self._active = self._firstSelectable()
+		elif key == KEY_END:
+			self._active = self._step(len(self._items), -1)
+		elif key in (KEY_ENTER, KEY_CR, KEY_SPACE):
+			if self._selectable(self._active):
 				self.invoke(self._active)
-			self._markDirty()
-			return True
 		elif key == KEY_RIGHT:
-			if self._active >= 0:
-				item = self._items[self._active]
-				if item['type'] == 'cascade' and item.get('menu'):
-					self.invoke(self._active)
-					self._markDirty()
-					return True
-		elif key in (KEY_ESC, KEY_LEFT):
-			self.unpost()
-			self._markDirty()
-			return True
-		return False
+			if self._selectable(self._active) and \
+					self._items[self._active]['type'] == 'cascade':
+				self._openCascade(self._active)
+			elif self._inMenuBarChain() and app is not None:
+				app._menuBarStep(+1)
+		elif key == KEY_LEFT:
+			parent = self._parentMenu
+			if parent is not None and parent._posted:
+				self.unpost()
+			elif self._fromMenuBar and app is not None:
+				app._menuBarStep(-1)
+			else:
+				self.unpost()
+		elif key == KEY_ESC:
+			parent = self._parentMenu
+			if parent is not None and parent._posted:
+				self.unpost()
+			elif app is not None and hasattr(app, '_closeMenus'):
+				app._closeMenus()
+			else:
+				self.unpost()
+		elif isinstance(key, int) and 32 < key < 127:
+			self._selectByLetter(chr(key).lower())
+		self._markDirty()
+		return True
+
+	def _selectByLetter(self, ch):
+		"""Activate the item whose underlined (or first) letter is *ch*."""
+		matches = []
+		for i, item in enumerate(self._items):
+			if not self._selectable(i):
+				continue
+			label = str(item.get('label', ''))
+			ul    = item.get('underline', -1)
+			if isinstance(ul, int) and 0 <= ul < len(label):
+				letter = label[ul].lower()
+			else:
+				letter = label[:1].lower()
+			if letter == ch:
+				matches.append(i)
+		if len(matches) == 1:
+			self.invoke(matches[0])
+		elif matches:
+			after = [i for i in matches if i > self._active]
+			self._active = after[0] if after else matches[0]
 
 	# ------------------------------------------------------------------
 	# Mouse input
 	# ------------------------------------------------------------------
 
 	def _handleMouse(self, mx: int, my: int, bstate: int):
-		bd  = int(self._opts.get('borderwidth') or 0)
-		app = self._getApp()
-		mw  = self._menuWidth()
-		mh  = self._menuHeight()
-		px  = self._postX
-		py  = self._postY
-
-		if app is not None:
-			if px + mw > app._w:
-				px = max(0, app._w - mw)
-			if py + mh > app._h:
-				py = max(0, app._h - mh)
-
-		# Map y to item index
-		row = my - py - bd
-		if 0 <= row < len(self._items):
-			self._active = row
+		px, py, mw, _ = self._screenRect()
+		bd  = self._border()
+		wheel = isWheel(bstate)
+		if wheel:
+			self._active = self._step(self._active, wheel)
 			self._markDirty()
+			return True
 
-			press   = bool(bstate & (curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED))
-			if press:
-				if (0 <= row < len(self._items) and
-						self._items[row]['type'] != 'separator'):
-					self.invoke(row)
+		row = my - py - bd
+		if not (0 <= row < len(self._items)) or not (px + bd <= mx < px + mw - bd):
+			return True
+		if self._selectable(row):
+			self._active = row
+		self._markDirty()
+
+		item	= self._items[row]
+		press	= bool(bstate & B1_PRESS) and not (bstate & MOTION)
+		release	= bool(bstate & (B1_RELEASE | B1_CLICK | B1_DCLICK))
+		if not self._selectable(row):
+			return True
+		if item['type'] == 'cascade':
+			sub = item.get('menu')
+			if press or release or (bstate & MOTION and sub is not None
+					and not sub._posted):
+				self._openCascade(row)
+		elif release:
+			self.invoke(row)
 		return True
 
 
@@ -503,49 +583,54 @@ class OptionMenu(Widget):
 			'activeforeground':	'',
 			'activebackground':	'',
 			'disabledforeground':	'gray',
+			'command':		None,
 		})
 		kwargs.setdefault('relief', 'raised')
 		kwargs.setdefault('borderwidth', 1)
+		self._variable = variable
+		self._menu     = Menu(parent)
 		if kwargs:
 			self.configure(**kwargs)
 
-		# Import here to avoid circular import issues at module level
-		self._variable = variable
-		self._values   = []
-
-		# Build internal menu
-		self._menu = Menu(parent)
-
 		if value is not None:
-			allVals = [value] + list(values)
-			for v in allVals:
-				self._values.append(str(v))
-				self._menu.add_command(
-					label   = str(v),
-					command = self._makeSetter(v),
-				)
+			for v in [value] + list(values):
+				self._menu.add_command(label=str(v), command=self._makeSetter(v))
 
 		# Set default if variable is empty
-		if variable is not None and hasattr(variable, 'get'):
-			if not variable.get() and value is not None:
+		if variable is not None and hasattr(variable, 'get') and value is not None:
+			try:
+				cur = variable.get()
+			except (TypeError, ValueError):
+				cur = None
+			if cur in (None, ''):
 				variable.set(value)
-			elif variable.get() == '' and value is not None:
-				variable.set(value)
-			elif value is not None and variable._val is None:
-				variable.set(value)
-
-		self._menu._parentMenu = None
 
 	def _makeSetter(self, v):
 		def _set():
 			if self._variable is not None:
 				self._variable.set(v)
+			cmd = self._opts.get('command')
+			if callable(cmd):
+				cmd(v)
 			self._markDirty()
 		return _set
 
 	@property
 	def menu(self):
 		return self._menu
+
+	def cget(self, key):
+		if key == 'menu':
+			return self._menu
+		return super().cget(key)
+
+	def __getitem__(self, key):
+		return self.cget(key)
+
+	@property
+	def _values(self):
+		return [str(it.get('label', '')) for it in self._menu._items
+			if it['type'] != 'separator']
 
 	# ------------------------------------------------------------------
 
@@ -555,26 +640,27 @@ class OptionMenu(Widget):
 		return ''
 
 	def _preferredSize(self):
-		bd   = int(self._opts.get('borderwidth') or 0)
+		bd   = self._cfgBorder()
 		padx = int(self._opts.get('padx') or 0)
 		pady = int(self._opts.get('pady') or 0)
-		maxLabelW = max((len(v) for v in self._values), default=4)
-		w = maxLabelW + 2*bd + 2*padx + 3	# 3 for ' ▼'
+		labels = self._values + [self._getCurrentLabel()]
+		maxLabelW = max((len(v) for v in labels), default=4)
+		ow = int(self._opts.get('width') or 0)
+		w = max(ow, maxLabelW) + 2*bd + 2*padx + 2	# 2 for ' ▼'
 		h = 1 + 2*bd + 2*pady
 		return (max(w, 6), max(h, 1))
 
 	def render(self, scr):
-		if self._w <= 0 or self._h <= 0:
+		if not self._isMapped():
 			return
 
 		state   = self._opts.get('state', 'normal')
-		focused = self._focused
-		bd      = int(self._opts.get('borderwidth') or 0)
+		bd      = self._border()
 		relief  = self._opts.get('relief', 'raised')
 
 		if state == 'disabled':
 			attr = self._getAttr(fg=self._opts.get('disabledforeground') or 'gray')
-		elif focused:
+		elif self._focused:
 			afg  = self._opts.get('activeforeground') or ''
 			abg  = self._opts.get('activebackground') or ''
 			attr = self._getAttr(fg=afg, bg=abg, reverse=not (afg or abg))
@@ -585,11 +671,10 @@ class OptionMenu(Widget):
 		if bd > 0:
 			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
 
-		cw     = max(1, self._w - 2*bd)
-		label  = self._getCurrentLabel() + ' ▼'	# ' ▼'
-		cy     = self._y + bd
-		cx     = self._x + bd
-		_addStr(scr, cy, cx, _pad(label, cw, 'left'), attr)
+		cw    = max(1, self._w - 2*bd)
+		label = _pad(self._getCurrentLabel(), max(0, cw - 2)) + ' ▼'
+		cy    = self._y + bd + (self._h - 2*bd - 1) // 2
+		_addStr(scr, cy, self._x + bd, _pad(label, cw, 'left'), attr)
 
 	# ------------------------------------------------------------------
 	# Focus / input
@@ -599,31 +684,38 @@ class OptionMenu(Widget):
 		return self._opts.get('state', 'normal') == 'normal'
 
 	def _openMenu(self):
-		app = self._getApp()
-		# Prefer opening below; flip above if not enough room
+		app   = self._getApp()
 		menuH = self._menu._menuHeight()
 		openY = self._y + self._h
 		if app is not None and openY + menuH > app._h:
 			openY = max(0, self._y - menuH)
+		cur = self._getCurrentLabel()
+		for i, it in enumerate(self._menu._items):
+			if str(it.get('label', '')) == cur:
+				self._menu._active = i
 		self._menu.post(self._x, openY)
 		self._markDirty()
 
 	def _stepValue(self, delta: int):
 		"""Cycle through values without opening menu."""
-		if not self._values:
+		items = [it for it in self._menu._items
+			if it['type'] != 'separator' and it.get('state') != 'disabled']
+		if not items:
 			return
-		cur = self._getCurrentLabel()
-		try:
-			idx = self._values.index(cur)
-		except ValueError:
-			idx = 0
-		idx = (idx + delta) % len(self._values)
-		if self._variable is not None:
-			self._variable.set(self._values[idx])
+		labels = [str(it.get('label', '')) for it in items]
+		cur    = self._getCurrentLabel()
+		idx    = labels.index(cur) if cur in labels else -delta
+		idx    = (idx + delta) % len(items)
+		cmd    = items[idx].get('command')
+		if callable(cmd):
+			cmd()
+		elif self._variable is not None:
+			self._variable.set(labels[idx])
 		self._markDirty()
 
 	def _handleKey(self, key: int) -> bool:
-		from ._events import KEY_UP, KEY_DOWN, KEY_SPACE
+		if self._opts.get('state') == 'disabled':
+			return False
 		if key in (KEY_ENTER, KEY_CR, KEY_SPACE):
 			self._openMenu()
 			return True
@@ -633,10 +725,13 @@ class OptionMenu(Widget):
 		if key == KEY_DOWN:
 			self._stepValue(1)
 			return True
-		return super()._handleKey(key)
+		return False
 
 	def _handleMouse(self, mx: int, my: int, bstate: int) -> bool:
-		if bstate & (curses.BUTTON1_PRESSED | curses.BUTTON1_CLICKED):
-			self._openMenu()
+		if self._opts.get('state') == 'disabled':
+			return False
+		if bstate & (B1_PRESS | B1_CLICK) and not (bstate & MOTION):
+			if not self._menu._posted:
+				self._openMenu()
 			return True
 		return False
