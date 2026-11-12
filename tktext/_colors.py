@@ -130,6 +130,62 @@ _BASIC_RGB = [
 ]
 
 
+# Colour mode.  'tk' renders every colour as given.  'terminal' renders the
+# palette default colours (Tk's gray background, white entry/list fields,
+# black text and whatever the program installs with tk_setPalette()) with
+# the terminal's own default colours (curses -1).
+_colorMode		= 'tk'
+_defaultBackgrounds	= set()		# RGB tuples mapped to the terminal bg
+_defaultForegrounds	= set()		# RGB tuples mapped to the terminal fg
+_colorGeneration	= 0		# bumped on every change (cache key)
+_TK_DEFAULT_BG		= ('#d9d9d9', '#ffffff')
+_TK_DEFAULT_FG		= ('#000000',)
+
+
+def _bump():
+	global _colorGeneration
+	_colorGeneration += 1
+
+
+def setColorMode(mode: str) -> None:
+	"""Select 'terminal' (palette defaults -> terminal colours) or 'tk'."""
+	global _colorMode
+	mode = str(mode).lower()
+	if mode not in ('terminal', 'tk'):
+		raise ValueError(f'unknown colour mode {mode!r}')
+	_colorMode = mode
+	if mode == 'terminal':
+		addDefaultColors(_TK_DEFAULT_BG, _TK_DEFAULT_FG)
+	_bump()
+
+
+def colorMode() -> str:
+	return _colorMode
+
+
+def addDefaultColors(backgrounds=(), foregrounds=()) -> None:
+	"""Register palette colours rendered as the terminal defaults in
+	'terminal' mode (single names or sequences)."""
+	for names, target in ((backgrounds, _defaultBackgrounds),
+			(foregrounds, _defaultForegrounds)):
+		if isinstance(names, str):
+			names = (names,)
+		for name in names or ():
+			rgb = ColorManager.toRGB(name) if name else None
+			if rgb is not None:
+				target.add(tuple(rgb))
+	_bump()
+
+
+def resetDefaultColors() -> None:
+	"""Forget all palette default colours (tests)."""
+	_defaultBackgrounds.clear()
+	_defaultForegrounds.clear()
+	if _colorMode == 'terminal':
+		addDefaultColors(_TK_DEFAULT_BG, _TK_DEFAULT_FG)
+	_bump()
+
+
 class ColorManager:
 	"""Maps color name pairs to curses color pair numbers."""
 
@@ -138,6 +194,36 @@ class ColorManager:
 		self._next	= 1
 		self._ready	= False
 		self._nColors	= 8
+		self._mapCache	= {}
+		self._mapGen	= -1
+
+	def mapDefaults(self, fg, bg):
+		"""In 'terminal' mode return (fg, bg) with the palette default
+		colours replaced by '' (terminal default).  The foreground is
+		only replaced when the background is, so that e.g. black text
+		on an explicit yellow background keeps its colour."""
+		if _colorMode != 'terminal':
+			return fg, bg
+		if self._mapGen != _colorGeneration:
+			self._mapCache.clear()
+			self._mapGen = _colorGeneration
+		key = (fg, bg)
+		result = self._mapCache.get(key)
+		if result is None:
+			result = key
+			if not bg or self._rgbIn(bg, _defaultBackgrounds):
+				if fg and self._rgbIn(fg, _defaultForegrounds):
+					fg = ''
+				result = (fg, '')
+			self._mapCache[key] = result
+		return result
+
+	@staticmethod
+	def _rgbIn(name, colors):
+		if isinstance(name, int):
+			return False
+		rgb = ColorManager.toRGB(name)
+		return rgb is not None and tuple(rgb) in colors
 
 	def init(self):
 		"""Initialise colours.  Safe on monochrome terminals."""
@@ -228,7 +314,7 @@ class ColorManager:
 			underline=False, dim=False, blink=False):
 		attr = 0
 		if self._ready:
-			key = (fg or '', bg or '')
+			key = self.mapDefaults(fg or '', bg or '')
 			if key not in self._pairs:
 				maxPairs = min(getattr(curses, 'COLOR_PAIRS', 64) - 1, 255)
 				if key == ('', ''):

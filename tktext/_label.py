@@ -4,6 +4,8 @@ from ._core import Widget, _fillRect, _drawBorder, _drawText, _int, _initArgs, _
 class Label(Widget):
 	"""Read-only text display widget.  Mirrors tkinter.Label."""
 
+	_clickFocus = False	# tkinter: clicking does not take the focus
+
 	def __init__(self, parent=None, cnf=None, **kwargs):
 		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)

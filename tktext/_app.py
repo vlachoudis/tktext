@@ -1,5 +1,6 @@
 import atexit
 import curses
+import os
 import shutil
 import sys
 import time
@@ -152,6 +153,7 @@ class Tk(Wm, Frame):
 			return
 		scr = curses.initscr()
 		self._ownScreen = True
+		self._captureOutput()
 		atexit.register(self._stopScreen)
 		self._savedExcepthook = sys.excepthook
 		def hook(exc, val, tb, app=self, prev=sys.excepthook):
@@ -181,6 +183,7 @@ class Tk(Wm, Frame):
 			curses.endwin()
 		except curses.error:
 			pass
+		self._releaseOutput()
 		if self._savedExcepthook is not None:
 			sys.excepthook = self._savedExcepthook
 			self._savedExcepthook = None
@@ -189,6 +192,49 @@ class Tk(Wm, Frame):
 			for tb in self._errors:
 				sys.stderr.write(tb)
 			self._errors.clear()
+
+	def _captureOutput(self):
+		"""While curses owns the terminal, anything printed (print(),
+		logging, warnings, C-level stderr) would be written over the
+		screen and scroll it.  Keep it and print it after endwin()."""
+		import io
+		import tempfile
+		self._savedStreams = (sys.stdout, sys.stderr)
+		self._capturedOut  = io.StringIO()
+		self._capturedErr  = io.StringIO()
+		sys.stdout = self._capturedOut
+		sys.stderr = self._capturedErr
+		self._savedFd2 = None
+		try:
+			self._stderrFile = tempfile.TemporaryFile()
+			self._savedFd2   = os.dup(2)
+			os.dup2(self._stderrFile.fileno(), 2)
+		except OSError:
+			self._savedFd2 = None
+
+	def _releaseOutput(self):
+		streams = getattr(self, '_savedStreams', None)
+		if streams is None:
+			return
+		self._savedStreams = None
+		sys.stdout, sys.stderr = streams
+		if self._savedFd2 is not None:
+			try:
+				os.dup2(self._savedFd2, 2)
+				os.close(self._savedFd2)
+				self._stderrFile.seek(0)
+				data = self._stderrFile.read().decode('utf-8', 'replace')
+				self._stderrFile.close()
+				if data:
+					sys.stderr.write(data)
+			except OSError:
+				pass
+			self._savedFd2 = None
+		for text, stream in ((self._capturedOut.getvalue(), sys.stdout),
+				(self._capturedErr.getvalue(), sys.stderr)):
+			if text:
+				stream.write(text)
+				stream.flush()
 
 	def _ensureScreen(self):
 		"""Make sure a screen exists for a modal loop; False if impossible."""
@@ -435,6 +481,7 @@ class Tk(Wm, Frame):
 	def _setFocus(self, widget):
 		if widget is self:
 			widget = None
+		self._autoFocus = None		# an explicit focus change wins
 		old = self._focusWidget
 		if old is widget:
 			return
@@ -503,6 +550,17 @@ class Tk(Wm, Frame):
 				win._needFocus = False
 				if not win._override and win is not self:
 					self._focusInto(win)
+		# a widget that lost the focus only because it was unmapped for a
+		# while (e.g. its page was rebuilt) gets it back when it reappears,
+		# unless the focus was moved explicitly in between
+		auto = getattr(self, '_autoFocus', None)
+		if auto is not None:
+			chosen, pending = auto
+			if self._focusWidget is not chosen or pending._destroyed:
+				self._autoFocus = None
+			elif pending._isMapped() and \
+					pending.winfo_toplevel() is self._activeWindow():
+				self._setFocus(pending)
 		fw   = self._focusWidget
 		grab = self._grabWindow()
 		ok   = fw is not None and not fw._destroyed and \
@@ -520,13 +578,18 @@ class Tk(Wm, Frame):
 		if ok:
 			self._focusLost = False
 			return
+		hidden = fw is not None and not fw._destroyed and not fw._isMapped()
 		if fw is not None:
 			fw._focused	  = False
 			self._focusWidget = None
 		self._focusLost = False
 		win = self._activeWindow()
 		if win is not None:
+			if hidden and win._lastFocus is fw:
+				win._lastFocus = None	# do not pick the hidden one again
 			self._focusInto(win)
+			if hidden:
+				self._autoFocus = (self._focusWidget, fw)
 
 	# ------------------------------------------------------------------
 	# Input dispatch
@@ -748,7 +811,8 @@ class Tk(Wm, Frame):
 				self._dragWidget = target
 
 		if (press or clicked) and not dragging:
-			if target._isFocusable():
+			# tkinter: clicking buttons/labels does not move the focus
+			if target._isFocusable() and (target._clickFocus or _core.PX == 1):
 				self._setFocus(target)
 
 		evt	= _newMouseEvent(target, mx, my, bstate)
@@ -827,7 +891,7 @@ class Tk(Wm, Frame):
 				x = x0
 		sub = bar._items[idx]['menu']
 		sub._fromMenuBar = True
-		sub.post(x, 1)
+		sub._post(x, 1)
 		self._menuBarActive = idx
 		self._dirty = True
 

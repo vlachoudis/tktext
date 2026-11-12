@@ -1,5 +1,5 @@
 import curses
-from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad, _sameValue, _initArgs, _cellY
+from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad, _sameValue, _initArgs, _cellX, _cellY
 from ._events import (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END,
 	KEY_ENTER, KEY_CR, KEY_ESC, KEY_SPACE, MOTION, B1_PRESS, B1_RELEASE,
 	B1_CLICK, B1_DCLICK, isWheel)
@@ -197,7 +197,12 @@ class Menu(Widget):
 	# ------------------------------------------------------------------
 
 	def post(self, x: int, y: int):
-		"""Display menu at screen position (x, y)."""
+		"""Display menu at screen position (x, y) — screen units like in
+		tkinter (pixels in pixel mode, e.g. event.x_root/winfo_rootx())."""
+		self._post(_cellX(x), _cellY(y))
+
+	def _post(self, x: int, y: int):
+		"""Display menu at screen cell (x, y) (internal callers)."""
 		cmd = self._opts.get('postcommand')
 		if callable(cmd):
 			cmd()
@@ -291,7 +296,7 @@ class Menu(Widget):
 		if app is not None and subX + sub._menuWidth() > app._width:
 			subX = max(0, px - sub._menuWidth())
 		sub._parentMenu = self
-		sub.post(subX, py + bd + i - sub._border())
+		sub._post(subX, py + bd + i - sub._border())
 		self._active = i
 
 	# ------------------------------------------------------------------
@@ -703,7 +708,7 @@ class OptionMenu(Widget):
 		for i, it in enumerate(self._menu._items):
 			if str(it.get('label', '')) == cur:
 				self._menu._active = i
-		self._menu.post(self._x, openY)
+		self._menu._post(self._x, openY)
 		self._markDirty()
 
 	def _stepValue(self, delta: int):

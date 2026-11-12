@@ -15,6 +15,8 @@ class Scrollbar(Widget):
 	by a page and dragging the thumb calls command('moveto', fraction).
 	"""
 
+	_clickFocus = False	# tkinter: clicking does not take the focus
+
 	def __init__(self, parent=None, cnf=None, **kwargs):
 		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)

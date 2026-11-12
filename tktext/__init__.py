@@ -338,6 +338,7 @@ __all__ = [
 # tkinter module-level compatibility
 # ---------------------------------------------------------------------------
 
+import os as _os
 import enum as _enum
 import sys as _sys
 import types as _types
@@ -458,12 +459,16 @@ class _Blocker:
 		return None
 
 
-def install(block=()):
+def install(block=(), colors='terminal'):
 	"""Make ``import tkinter`` (and its submodules) load tktext.
 
 	Call it before anything imports tkinter.  Modules that need a real Tk
 	(PIL.ImageTk, ttkthemes) — plus any extra names in *block* — are made
 	unimportable, so that applications take their "not available" paths.
+
+	*colors* 'terminal' renders the Tk palette defaults (gray background,
+	white fields, black text) with the terminal's own colours; 'tk' keeps
+	Tk's look.  The TKTEXT_COLORS environment variable overrides it.
 	"""
 	from . import ttk as _ttk, messagebox, filedialog, font, colorchooser, \
 		dnd, simpledialog, constants
@@ -494,4 +499,6 @@ def install(block=()):
 	# tkinter programs measure in pixels: emulate a display of 8x16 cells
 	from ._core import setPixelMode
 	setPixelMode(8, 16)
+	from ._colors import setColorMode
+	setColorMode(_os.environ.get('TKTEXT_COLORS') or colors)
 

@@ -1,4 +1,5 @@
 import curses
+from . import _colors
 from ._events import Event, KeyEvent, MouseEvent, B1_PRESS, B1_RELEASE, \
 	B1_CLICK, B1_DCLICK, B3_ANY, MOTION, isWheel, keysymOf
 
@@ -293,6 +294,7 @@ class Widget:
 	_override	= False
 	_widgetCount	= 0
 	_lastGeom	= None		# geometry of the last <Configure>
+	_clickFocus	= True		# a mouse press gives the keyboard focus
 	_propagate	= True		# pack_propagate / grid_propagate
 
 	def __init__(self, parent=None, cnf=None, **kwargs):
@@ -791,9 +793,14 @@ class Widget:
 	# ------------------------------------------------------------------
 
 	def focusSet(self):
-		"""Give keyboard focus to this widget."""
+		"""Give keyboard focus to this widget.  Like Tk the request is
+		remembered by the widget's toplevel even if another window is
+		active now (the focus moves here when that window is activated)."""
 		app = self._getApp()
 		if app:
+			top = self.winfoToplevel()
+			if top is not None:
+				top._lastFocus = self
 			app._setFocus(self)
 
 	def focus(self):
@@ -1247,6 +1254,7 @@ class Widget:
 		for key in ('background', 'foreground'):
 			if kw.get(key):
 				self.option_add(f'*{key}', kw[key])
+		_colors.addDefaultColors(kw.get('background'), kw.get('foreground'))
 
 	def tk_bisque(self):
 		pass
@@ -1525,11 +1533,22 @@ class Widget:
 		if not self._opts.get('image'):
 			return text
 		if not text:
-			# an icon: show a glyph only if it can be clicked
-			from ._image import IMAGE_GLYPH
+			# an icon: show its alt text (or a glyph) only if it can be
+			# clicked; decorative icons stay blank
+			from ._image import IMAGE_GLYPH, _imageByName
 			if self._opts.get('command') or any(self._bindings.get(e) for e in
 					('<Button-1>', '<ButtonRelease-1>', '<1>', '<ButtonPress-1>')):
-				return IMAGE_GLYPH
+				img = _imageByName(self._opts.get('image'))
+				if img is None:
+					img = self._opts.get('image')
+				# a large picture goes with a text label elsewhere (ribbon
+				# buttons): only small (toolbar) icons are named
+				if PX != 1 and _int(getattr(img, 'height', lambda: 0)()) > 24:
+					return ' '
+				if self._labelledByNeighbour():
+					return ' '
+				alt = getattr(img, 'alt', '')
+				return f' {alt} ' if alt else IMAGE_GLYPH
 			return ' '
 		if PX == 1:
 			return text
@@ -1539,6 +1558,26 @@ class Widget:
 		if comp == 'right':
 			return text + ' '
 		return ' ' + text + ' '
+
+	def _labelledByNeighbour(self) -> bool:
+		"""An icon followed (same grid row, next column, or the next
+		left-packed sibling) by a widget showing text: an icon + label
+		pair, so the icon need not be named."""
+		cont = self._container()
+		if cont is None or self._geoManager not in ('grid', 'pack'):
+			return False
+		info = self._geoInfo
+		sibs = [c for c in cont._children if c._geoManager == self._geoManager]
+		if self._geoManager == 'grid':
+			nxt = [c for c in sibs if c._geoInfo.get('row') == info.get('row')
+				and c._geoInfo.get('column') == info.get('column', 0) + 1]
+		else:
+			if info.get('side', 'top') != 'left' or self not in sibs:
+				return False
+			i   = sibs.index(self)
+			nxt = sibs[i + 1:i + 2]
+		return any(any(ch.isalnum() for ch in str(c._opts.get('text') or ''))
+			for c in nxt)
 
 	def _isMapped(self) -> bool:
 		return self._width > 0 and self._height > 0 and not self._destroyed

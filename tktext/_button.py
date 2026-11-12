@@ -6,6 +6,8 @@ from ._events import KEY_ENTER, KEY_SPACE, B1_RELEASE, B1_CLICK, MOTION
 class Button(Widget):
 	"""Clickable button widget.  Mirrors tkinter.Button."""
 
+	_clickFocus = False	# tkinter: clicking does not take the focus
+
 	def __init__(self, parent=None, cnf=None, **kwargs):
 		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)

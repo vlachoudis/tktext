@@ -15,6 +15,8 @@ class _BoolVar:
 class Checkbutton(Widget):
 	"""Toggle button widget.  Mirrors tkinter.Checkbutton."""
 
+	_clickFocus = False	# tkinter: clicking does not take the focus
+
 	def __init__(self, parent=None, cnf=None, **kwargs):
 		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)

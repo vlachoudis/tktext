@@ -68,6 +68,11 @@ class Style:
 		if not kw:
 			return dict(cfg)
 		cfg.update(kw)
+		if style == '.':
+			from ._colors import addDefaultColors
+			addDefaultColors(
+				(kw.get('background'), kw.get('fieldbackground')),
+				kw.get('foreground'))
 		return None
 
 	def map(self, style, query_opt=None, **kw):

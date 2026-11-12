@@ -243,7 +243,7 @@ def buildDemo():
 
 	def openMenu():
 		b = menuBtn
-		popupMenu.post(b._x, b._y + b._height)
+		popupMenu.post(b.winfo_rootx(), b.winfo_rooty() + b.winfo_height())
 
 	menuBtn = tk.Button(btnFrame, text='Menu ▼', relief='single',
 		command=openMenu)
