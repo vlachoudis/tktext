@@ -1,10 +1,11 @@
-from ._core import Widget, _fillRect, _drawBorder, _drawText, _int
+from ._core import Widget, _fillRect, _drawBorder, _drawText, _int, _initArgs, _cellsX
 
 
 class Label(Widget):
 	"""Read-only text display widget.  Mirrors tkinter.Label."""
 
-	def __init__(self, parent=None, **kwargs):
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)
 		self._opts.update({
 			'text':		'',
@@ -19,16 +20,16 @@ class Label(Widget):
 			'takefocus':	False,
 		})
 		if kwargs:
-			self.configure(**kwargs)
+			Label.configure(self, **kwargs)
 
 	# ------------------------------------------------------------------
 
 	def _getText(self):
 		tv = self._opts.get('textvariable')
 		if tv is not None and hasattr(tv, 'get'):
-			return str(tv.get())
+			return self._withImage(str(tv.get()))
 		text = self._opts.get('text')
-		return '' if text is None else str(text)
+		return self._withImage('' if text is None else str(text))
 
 	def _wrappedText(self):
 		text = self._getText()
@@ -47,7 +48,7 @@ class Label(Widget):
 		oh    = _int(self._opts.get('height'))
 		padx  = _int(self._opts.get('padx'))
 		pady  = _int(self._opts.get('pady'))
-		lines = self._wrappedText().split('\n')
+		lines = self._wrappedText().expandtabs(8).split('\n')
 		textW = max(len(l) for l in lines)
 		textH = len(lines)
 		w = (ow if ow > 0 else textW) + 2*bd + 2*padx
@@ -67,16 +68,54 @@ class Label(Widget):
 		pady  = _int(self._opts.get('pady'))
 		attr  = self._contentAttr()
 
-		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
+		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 
 		relief = self._opts.get('relief', 'flat')
 		if bd > 0 and relief != 'flat':
-			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
 
 		_drawText(scr,
 			self._x + bd + padx, self._y + bd + pady,
-			self._w - 2*bd - 2*padx, self._h - 2*bd - 2*pady,
+			self._width - 2*bd - 2*padx, self._height - 2*bd - 2*pady,
 			self._wrappedText(),
 			self._opts.get('anchor') or 'center',
 			self._opts.get('justify') or 'center',
 			attr)
+
+
+class Message(Label):
+	"""Multi-line text wrapped to a width (mirrors tkinter.Message).
+	The wrap width is the 'width' option, or derived from 'aspect'
+	(100 * width / height, default 150) like Tk."""
+
+	_PIXEL_OPTIONS = {**Label._PIXEL_OPTIONS, 'width': _cellsX}
+
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
+		kwargs.setdefault('anchor',  'nw')
+		kwargs.setdefault('justify', 'left')
+		kwargs.setdefault('aspect',  150)
+		super().__init__(parent, **kwargs)
+
+	def _wrappedText(self):
+		import math
+		import textwrap
+		text  = self._getText()
+		width = _int(self._opts.get('width'))
+		if width <= 0:
+			aspect = max(1, _int(self._opts.get('aspect'), 150))
+			# a cell is about twice as high as wide
+			width  = int(math.sqrt(max(1, len(text)) * aspect / 50.0))
+			width  = max(10, width)
+		lines = []
+		for para in text.split('\n'):
+			lines.extend(textwrap.wrap(para, width) or [''])
+		return '\n'.join(lines)
+
+	def _preferredSize(self):
+		saved = self._opts.get('width')
+		self._opts['width'] = 0
+		try:
+			return super()._preferredSize()
+		finally:
+			self._opts['width'] = saved

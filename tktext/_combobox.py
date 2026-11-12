@@ -1,6 +1,6 @@
 import curses
 from ._entry import Entry
-from ._core import _addStr, _fillRect, _drawBorder, _pad, _int
+from ._core import _addStr, _fillRect, _drawBorder, _pad, _int, _initArgs
 from ._events import (KEY_UP, KEY_DOWN, KEY_HOME, KEY_END, KEY_PPAGE,
 	KEY_NPAGE, KEY_ENTER, KEY_ESC, KEY_SPACE, KEY_TAB,
 	B1_PRESS, B1_RELEASE, B1_CLICK, MOTION, isWheel)
@@ -14,7 +14,8 @@ class Combobox(Entry):
 
 	_BUTTON = ' ▼ '
 
-	def __init__(self, parent=None, **kwargs):
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)
 		self._opts.update({
 			'values':		(),
@@ -27,7 +28,7 @@ class Combobox(Entry):
 		self._ddScroll = 0	# first visible row in dropdown
 		self._dropdown = None	# _ComboDropdown overlay while open
 		if kwargs:
-			self.configure(**kwargs)
+			Combobox.configure(self, **kwargs)
 
 	# ------------------------------------------------------------------
 	# Public API
@@ -63,7 +64,7 @@ class Combobox(Entry):
 		return [str(v) for v in vals]
 
 	def _visW(self) -> int:
-		return max(1, self._w - 2*self._border() - len(self._BUTTON))
+		return max(1, self._width - 2*self._border() - len(self._BUTTON))
 
 	def _ddRows(self) -> int:
 		return max(1, min(len(self._values()), _int(self._opts.get('height'), 10) or 10))
@@ -115,10 +116,10 @@ class Combobox(Entry):
 		"""Return (x, y, w, h) of the dropdown overlay."""
 		ddH  = self._ddRows() + 2
 		app  = self._getApp()
-		scrH = app._h if app else 24
-		below = self._y + self._h
+		scrH = app._height if app else 24
+		below = self._y + self._height
 		ddY  = below if below + ddH <= scrH or self._y - ddH < 0 else self._y - ddH
-		return (self._x, ddY, self._w, ddH)
+		return (self._x, ddY, self._width, ddH)
 
 	# ------------------------------------------------------------------
 	# Rendering (widget body only; dropdown is rendered as an overlay)
@@ -129,9 +130,9 @@ class Combobox(Entry):
 			return
 		super().render(scr)
 		bd    = self._border()
-		by    = self._y + bd + (self._h - 2*bd - 1) // 2
+		by    = self._y + bd + (self._height - 2*bd - 1) // 2
 		battr = self._getAttr() | curses.A_REVERSE
-		_addStr(scr, by, self._x + self._w - bd - len(self._BUTTON), self._BUTTON, battr)
+		_addStr(scr, by, self._x + self._width - bd - len(self._BUTTON), self._BUTTON, battr)
 
 	def _renderDropdown(self, scr):
 		vals = self._values()
@@ -236,7 +237,7 @@ class Combobox(Entry):
 					self._fireVirtual('<<ComboboxSelected>>')
 			return True
 		pressed = bool(bstate & (B1_PRESS | B1_CLICK)) and not (bstate & MOTION)
-		btnX    = self._x + self._w - self._border() - len(self._BUTTON)
+		btnX    = self._x + self._width - self._border() - len(self._BUTTON)
 		if pressed and not self._mouseDown and (mx >= btnX or state == 'readonly'):
 			if self._open:
 				self._closeDropdown()

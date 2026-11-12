@@ -1,4 +1,4 @@
-from ._core import Widget, _fillRect, _drawBorder, _addStr, _int
+from ._core import Widget, _fillRect, _drawBorder, _addStr, _int, _cellsX, _cellsY, _initArgs
 from ._layout import doPackLayout, doGridLayout, doPlaceLayout, \
 	packPreferredSize, gridPreferredSize
 
@@ -7,7 +7,10 @@ class Frame(Widget):
 	"""Container widget.  Supports pack, grid, and place geometry managers
 	for its children.  Mirrors tkinter.Frame / tkinter.ttk.Frame."""
 
-	def __init__(self, parent=None, **kwargs):
+	_pixelSize = True
+
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		# Per-row / per-column configuration for grid manager
 		self._rowCfg = {}
 		self._colCfg = {}
@@ -18,7 +21,7 @@ class Frame(Widget):
 			'takefocus':	False,
 		})
 		if kwargs:
-			self.configure(**kwargs)
+			Frame.configure(self, **kwargs)
 
 	# ------------------------------------------------------------------
 	# Grid configuration
@@ -33,6 +36,10 @@ class Frame(Widget):
 			indices = [index]
 		if not kwargs:
 			return dict(table.get(_int(indices[0]), {})) if indices else {}
+		conv = _cellsX if table is self._colCfg else _cellsY
+		for key in ('minsize', 'pad'):
+			if key in kwargs:
+				kwargs[key] = conv(kwargs[key], key == 'pad')
 		for i in indices:
 			table.setdefault(_int(i), {}).update(kwargs)
 		self._markDirty()
@@ -104,7 +111,7 @@ class Frame(Widget):
 	def _innerGeom(self):
 		bd = self._border()
 		return _InnerGeom(self._x + bd, self._y + bd,
-			max(0, self._w - 2*bd), max(0, self._h - 2*bd))
+			max(0, self._width - 2*bd), max(0, self._height - 2*bd))
 
 	def _layoutChildren(self):
 		"""Compute positions for all children managed by any geometry manager."""
@@ -129,7 +136,7 @@ class Frame(Widget):
 		ch = max(ph, gh)
 		# Like tkinter: with managed children the requested size follows
 		# them (geometry propagation); otherwise width/height are used.
-		if not packed and not gridded:
+		if (not packed and not gridded) or not self._propagate:
 			cw, ch = ow, oh
 		return (max(cw, 1) + 2*bd, max(ch, 1) + 2*bd)
 
@@ -143,26 +150,26 @@ class Frame(Widget):
 		attr = self._getAttr()
 		bd   = self._border()
 
-		# Background fill
-		if self._opts.get('bg'):
-			_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
+		# Background fill (Tk always paints a frame's background)
+		if self._color('bg'):
+			_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 
 		# Border
 		relief = self._opts.get('relief', 'flat')
 		if bd > 0 and relief != 'flat':
-			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
 
 		text = str(self._opts.get('text') or '')
-		if text and self._w > 4:
-			label = f' {text} '[:self._w - 2]
+		if text and self._width > 4:
+			label = f' {text} '[:self._width - 2]
 			anchor = self._opts.get('labelanchor', 'nw')
 			if 'e' in anchor:
-				lx = self._x + self._w - 1 - len(label)
+				lx = self._x + self._width - 1 - len(label)
 			elif anchor in ('n', 's'):
-				lx = self._x + (self._w - len(label)) // 2
+				lx = self._x + (self._width - len(label)) // 2
 			else:
 				lx = self._x + 1
-			ly = self._y + self._h - 1 if anchor.startswith('s') else self._y
+			ly = self._y + self._height - 1 if anchor.startswith('s') else self._y
 			_addStr(scr, ly, lx, label, attr)
 
 		self._renderChildren(scr)
@@ -171,7 +178,10 @@ class Frame(Widget):
 class LabelFrame(Frame):
 	"""Frame with a caption drawn on its border.  Mirrors tkinter.LabelFrame."""
 
-	def __init__(self, parent=None, **kwargs):
+	_keepBorder = True
+
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		kwargs.setdefault('relief',      'single')
 		kwargs.setdefault('borderwidth', 1)
 		super().__init__(parent, **kwargs)
@@ -190,5 +200,5 @@ class _InnerGeom:
 	def __init__(self, x, y, w, h):
 		self._x = x
 		self._y = y
-		self._w = w
-		self._h = h
+		self._width = w
+		self._height = h

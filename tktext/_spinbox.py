@@ -1,6 +1,6 @@
 import curses
 from ._entry import Entry
-from ._core import _addStr, _int
+from ._core import _addStr, _int, _initArgs
 from ._events import (KEY_UP, KEY_DOWN, KEY_PPAGE, KEY_NPAGE,
 	B1_PRESS, B1_CLICK, MOTION, isWheel)
 
@@ -20,7 +20,8 @@ class Spinbox(Entry):
 
 	_BUTTONS = ' ▲▼'
 
-	def __init__(self, parent=None, **kwargs):
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)
 		self._opts.update({
 			'from_':		0.0,
@@ -36,7 +37,7 @@ class Spinbox(Entry):
 		})
 		kwargs.setdefault('width', 10)
 		if kwargs:
-			self.configure(**kwargs)
+			Spinbox.configure(self, **kwargs)
 
 		tv = self._opts.get('textvariable')
 		if tv is None or str(tv.get()) == '':
@@ -117,7 +118,7 @@ class Spinbox(Entry):
 			cmd()
 
 	def _visW(self) -> int:
-		return max(1, self._w - 2*self._border() - len(self._BUTTONS))
+		return max(1, self._width - 2*self._border() - len(self._BUTTONS))
 
 	def _preferredSize(self):
 		bd = self._cfgBorder()
@@ -125,7 +126,7 @@ class Spinbox(Entry):
 		return (ow + 2*bd + len(self._BUTTONS), 1 + 2*bd)
 
 	def _buttonX(self) -> int:
-		return self._x + self._w - self._border() - len(self._BUTTONS)
+		return self._x + self._width - self._border() - len(self._BUTTONS)
 
 	# ------------------------------------------------------------------
 	# Rendering
@@ -137,7 +138,7 @@ class Spinbox(Entry):
 		super().render(scr)
 		bd    = self._border()
 		attr  = self._getAttr()
-		by    = self._y + bd + (self._h - 2*bd - 1) // 2
+		by    = self._y + bd + (self._height - 2*bd - 1) // 2
 		battr = attr | (curses.A_REVERSE if self._focused else 0)
 		_addStr(scr, by, self._buttonX(), self._BUTTONS, battr)
 

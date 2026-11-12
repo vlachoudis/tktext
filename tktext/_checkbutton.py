@@ -1,4 +1,4 @@
-from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad, _sameValue, _int
+from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad, _sameValue, _int, _initArgs
 from ._events import KEY_ENTER, KEY_SPACE, B1_RELEASE, B1_CLICK, MOTION
 
 
@@ -15,7 +15,8 @@ class _BoolVar:
 class Checkbutton(Widget):
 	"""Toggle button widget.  Mirrors tkinter.Checkbutton."""
 
-	def __init__(self, parent=None, **kwargs):
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)
 		self._opts.update({
 			'text':			'',
@@ -35,7 +36,7 @@ class Checkbutton(Widget):
 		kwargs.setdefault('relief', 'flat')
 		kwargs.setdefault('borderwidth', 0)
 		if kwargs:
-			self.configure(**kwargs)
+			Checkbutton.configure(self, **kwargs)
 
 		# Ensure a variable exists
 		if self._opts.get('variable') is None:
@@ -102,8 +103,8 @@ class Checkbutton(Widget):
 	def _getText(self) -> str:
 		tv = self._opts.get('textvariable')
 		if tv is not None and hasattr(tv, 'get'):
-			return str(tv.get())
-		return str(self._opts.get('text') or '')
+			return self._withImage(str(tv.get()))
+		return self._withImage(str(self._opts.get('text') or ''))
 
 	def _indicator(self) -> str:
 		return '[X] ' if self._isChecked() else '[ ] '
@@ -111,7 +112,7 @@ class Checkbutton(Widget):
 	def _preferredSize(self):
 		bd    = self._cfgBorder()
 		padx  = _int(self._opts.get('padx'))
-		lines = self._getText().split('\n')
+		lines = self._getText().expandtabs(8).split('\n')
 		textW = max(len(l) for l in lines)
 		w     = max(_int(self._opts.get('width')), 4 + textW) + 2*bd + 2*padx
 		h     = len(lines) + 2*bd
@@ -139,15 +140,15 @@ class Checkbutton(Widget):
 		else:
 			attr = self._getAttr()
 
-		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
+		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 
 		if bd > 0 and relief != 'flat':
-			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
 
-		cw    = max(0, self._w - 2*bd - 2*padx)
-		lines = self._getText().split('\n')
+		cw    = max(0, self._width - 2*bd - 2*padx)
+		lines = self._getText().expandtabs(8).split('\n')
 		for i, line in enumerate(lines):
-			if i >= self._h - 2*bd:
+			if i >= self._height - 2*bd:
 				break
 			pfx = self._indicator() if i == 0 else '    '
 			_addStr(scr, self._y + bd + i, self._x + bd + padx,

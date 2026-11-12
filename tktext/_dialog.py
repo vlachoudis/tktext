@@ -118,11 +118,11 @@ class _MsgDialog(_Dialog):
 					self._btnIdx = i
 
 	def _lines(self):
-		maxW  = max(10, self._app._w - 10)
+		maxW  = max(10, self._app._width - 10)
 		lines = []
 		for para in self._message.split('\n'):
 			lines.extend(textwrap.wrap(para, maxW) or [''])
-		maxH  = max(1, self._app._h - 7)
+		maxH  = max(1, self._app._height - 7)
 		if len(lines) > maxH:
 			lines = lines[:maxH - 1] + ['…']
 		return lines
@@ -134,14 +134,14 @@ class _MsgDialog(_Dialog):
 		lines = self._lines()
 		msgW  = max((len(l) for l in lines), default=0) + 6
 		w     = max(len(self._title) + 6, msgW, self._btnTotal() + 4, 24)
-		w     = min(w, max(10, self._app._w))
-		h     = min(len(lines) + 6, max(6, self._app._h))
+		w     = min(w, max(10, self._app._width))
+		h     = min(len(lines) + 6, max(6, self._app._height))
 		return (w, h)
 
 	def _pos(self):
 		app  = self._app
 		w, h = self._size()
-		return (max(0, (app._w - w) // 2), max(0, (app._h - h) // 2))
+		return (max(0, (app._width - w) // 2), max(0, (app._height - h) // 2))
 
 	def _buttonSpans(self):
 		w, h  = self._size()
@@ -298,14 +298,14 @@ class _FileDialog(_Dialog):
 
 	def _size(self):
 		app = self._app
-		w   = min(70, max(30, app._w - 4))
-		h   = min(24, max(12, app._h - 2))
-		return (min(w, app._w), min(h, app._h))
+		w   = min(70, max(30, app._width - 4))
+		h   = min(24, max(12, app._height - 2))
+		return (min(w, app._width), min(h, app._height))
 
 	def _pos(self):
 		app  = self._app
 		w, h = self._size()
-		return (max(0, (app._w - w) // 2), max(0, (app._h - h) // 2))
+		return (max(0, (app._width - w) // 2), max(0, (app._height - h) // 2))
 
 	def _geometry(self):
 		w, h   = self._size()

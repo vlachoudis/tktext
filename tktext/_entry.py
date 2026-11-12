@@ -1,5 +1,5 @@
 import curses
-from ._core import TclError, Widget, _fillRect, _drawBorder, _addStr, _int
+from ._core import TclError, Widget, _fillRect, _drawBorder, _addStr, _int, _initArgs, _cellX
 from ._events import (KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END,
 	KEY_BACKSPACE, KEY_DC, KEY_SHIFT_LEFT, KEY_SHIFT_RIGHT, KEY_SHIFT_HOME,
 	KEY_SHIFT_END, B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, MOTION,
@@ -26,7 +26,8 @@ class Entry(Widget):
 	editable) or 'disabled'.
 	"""
 
-	def __init__(self, parent=None, **kwargs):
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)
 		self._opts.update({
 			'textvariable':		None,
@@ -54,7 +55,7 @@ class Entry(Widget):
 		self._lastXScroll	= None
 
 		if kwargs:
-			self.configure(**kwargs)
+			Entry.configure(self, **kwargs)
 
 	# ------------------------------------------------------------------
 	# Buffer access (routes through textvariable when set)
@@ -220,7 +221,7 @@ class Entry(Widget):
 		return (ow + 2*bd, 1 + 2*bd)
 
 	def _visW(self) -> int:
-		return max(1, self._w - 2*self._border())
+		return max(1, self._width - 2*self._border())
 
 	def _cursorPos(self):
 		"""Return screen (y, x) for the cursor block."""
@@ -228,7 +229,7 @@ class Entry(Widget):
 			return None
 		self._clampCur()
 		bd = self._border()
-		return (self._y + bd + (self._h - 2*bd - 1) // 2,
+		return (self._y + bd + (self._height - 2*bd - 1) // 2,
 			self._x + bd + self._cur - self._scrollX)
 
 	# ------------------------------------------------------------------
@@ -255,7 +256,7 @@ class Entry(Widget):
 			return self._sel[1]
 		if s.startswith('@'):
 			bd = self._border()
-			return self._scrollX + _int(s[1:]) - bd
+			return self._scrollX + _cellX(_int(s[1:])) - bd
 		try:
 			return int(s)
 		except ValueError:
@@ -265,7 +266,7 @@ class Entry(Widget):
 		self._cur = max(0, min(self._cur, len(self._getBuf())))
 
 	def _scrollToCursor(self):
-		if self._w <= 0:
+		if self._width <= 0:
 			return
 		visW = self._visW()
 		if self._cur < self._scrollX:
@@ -320,16 +321,16 @@ class Entry(Widget):
 		else:
 			attr = self._getAttr()
 
-		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
+		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 		if bd > 0 and relief != 'flat':
-			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
 
 		visW = self._visW()
 		buf  = self._getBuf()
 		show = self._opts.get('show') or ''
 		disp = show[0] * len(buf) if show else buf
 
-		screenY = self._y + bd + (self._h - 2*bd - 1) // 2
+		screenY = self._y + bd + (self._height - 2*bd - 1) // 2
 		screenX = self._x + bd
 
 		selAttr = attr | curses.A_REVERSE
@@ -464,7 +465,7 @@ class Entry(Widget):
 			return False
 
 		buf = self._getBuf()
-		mx  = max(self._x + bd, min(mx, self._x + self._w - bd - 1))
+		mx  = max(self._x + bd, min(mx, self._x + self._width - bd - 1))
 		col = max(0, min(self._scrollX + (mx - self._x - bd), len(buf)))
 
 		if bstate & B1_DCLICK:

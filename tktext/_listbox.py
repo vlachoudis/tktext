@@ -1,5 +1,5 @@
 import curses
-from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad, _int
+from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad, _int, _initArgs, _cellY, _pxBox
 from ._events import (KEY_UP, KEY_DOWN, KEY_HOME, KEY_END, KEY_PPAGE,
 	KEY_NPAGE, KEY_ENTER, KEY_SPACE, KEY_SHIFT_UP, KEY_SHIFT_DOWN,
 	B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, MOTION, isWheel)
@@ -35,7 +35,7 @@ class _ScrollMixin:
 
 	def _showInternalBar(self) -> bool:
 		return (not callable(self._opts.get('yscrollcommand')) and
-			self._totalRows() > self._visRows() and self._w > 2)
+			self._totalRows() > self._visRows() and self._width > 2)
 
 	def yview(self, *args):
 		"""Query ((first, last)) or change the vertical view."""
@@ -105,7 +105,8 @@ class _ScrollMixin:
 class Listbox(_ScrollMixin, Widget):
 	"""Scrollable list widget.  Mirrors tkinter.Listbox."""
 
-	def __init__(self, parent=None, **kwargs):
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)
 		self._opts.update({
 			'selectmode':		'browse',
@@ -131,7 +132,7 @@ class Listbox(_ScrollMixin, Widget):
 		self._sbDrag   = None		# internal scrollbar drag state
 
 		if kwargs:
-			self.configure(**kwargs)
+			Listbox.configure(self, **kwargs)
 
 	def configure(self, cnf=None, **kwargs):
 		if cnf:
@@ -289,7 +290,7 @@ class Listbox(_ScrollMixin, Widget):
 
 	def nearest(self, y):
 		"""Return index of the item nearest to widget-relative *y*."""
-		i = self._scrollY + (int(y) - self._border())
+		i = self._scrollY + (_cellY(y) - self._border())
 		return max(0, min(i, len(self._items) - 1))
 
 	def bbox(self, idx):
@@ -297,7 +298,7 @@ class Listbox(_ScrollMixin, Widget):
 		bd = self._border()
 		i  = self._resolveIdx(idx) - self._scrollY
 		if 0 <= i < self._visRows() and self._resolveIdx(idx) < len(self._items):
-			return (bd, bd + i, self._w - 2*bd, 1)
+			return _pxBox((bd, bd + i, self._width - 2*bd, 1))
 		return None
 
 	def itemconfigure(self, idx, cnf=None, **kwargs):
@@ -320,6 +321,18 @@ class Listbox(_ScrollMixin, Widget):
 		if not args:
 			return (0.0, 1.0)
 		return None
+
+	def xview_moveto(self, fraction):
+		pass
+
+	def xview_scroll(self, number, what):
+		pass
+
+	def scan_mark(self, x, y):
+		pass
+
+	def scan_dragto(self, x, y, gain=10):
+		pass
 
 	# ------------------------------------------------------------------
 	# Internal helpers
@@ -349,7 +362,7 @@ class Listbox(_ScrollMixin, Widget):
 	_indexForYview = _resolveIdx
 
 	def _visRows(self) -> int:
-		return max(1, self._h - 2*self._border())
+		return max(1, self._height - 2*self._border())
 
 	def _totalRows(self) -> int:
 		return len(self._items)
@@ -385,13 +398,13 @@ class Listbox(_ScrollMixin, Widget):
 		if disabled:
 			attr = self._getAttr(fg='gray')
 
-		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
+		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 		if bd > 0 and relief != 'flat':
-			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
 
 		showBar = self._showInternalBar()
 		visH    = self._visRows()
-		visW    = max(1, self._w - 2*bd - (1 if showBar else 0))
+		visW    = max(1, self._width - 2*bd - (1 if showBar else 0))
 		bx      = self._x + bd
 		by      = self._y + bd
 
@@ -424,7 +437,7 @@ class Listbox(_ScrollMixin, Widget):
 			_addStr(scr, by + i, bx, text, rowAttr)
 
 		if showBar:
-			self._drawInternalBar(scr, self._x + self._w - bd - 1, by, visH, attr)
+			self._drawInternalBar(scr, self._x + self._width - bd - 1, by, visH, attr)
 
 	# ------------------------------------------------------------------
 	# Input
@@ -509,7 +522,7 @@ class Listbox(_ScrollMixin, Widget):
 		bd    = self._border()
 		visH  = self._visRows()
 		by    = self._y + bd
-		barX  = self._x + self._w - bd - 1
+		barX  = self._x + self._width - bd - 1
 
 		wheel = isWheel(bstate)
 		if wheel:

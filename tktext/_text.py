@@ -2,7 +2,8 @@ import curses
 import re
 
 from ._core import TclError, Widget, _addStr, _fillRect, _drawBorder, _int, \
-	_newMouseEvent, _mouseEventNames
+	_newMouseEvent, _mouseEventNames, _cellX, _cellY, _pxBox
+from . import _core
 from ._listbox import _ScrollMixin
 from ._events import (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT,
 	KEY_HOME, KEY_END, KEY_PPAGE, KEY_NPAGE, KEY_BACKSPACE, KEY_DC, KEY_ENTER,
@@ -41,6 +42,7 @@ _RE_WORD	= re.compile(r'\s*(linestart|lineend|wordstart|wordend)\b')
 
 def _isWordChar(ch) -> bool:
 	return ch.isalnum() or ch == '_'
+from ._core import _initArgs
 
 
 class Text(_ScrollMixin, Widget):
@@ -55,7 +57,8 @@ class Text(_ScrollMixin, Widget):
 	after the implicit final newline ("end") is (len(lines), 0).
 	"""
 
-	def __init__(self, parent=None, **kwargs):
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)
 		self._opts.update({
 			'wrap':			'char',
@@ -108,7 +111,7 @@ class Text(_ScrollMixin, Widget):
 		self._version	= 0
 
 		if kwargs:
-			self.configure(**kwargs)
+			Text.configure(self, **kwargs)
 
 	# ------------------------------------------------------------------
 	# Convenience accessors
@@ -211,7 +214,7 @@ class Text(_ScrollMixin, Widget):
 			return self._clampPos((r, c)), s[m.end():]
 		m = _RE_AT.match(s)
 		if m:
-			return self._posFromXY(int(m.group(1)), int(m.group(2))), s[m.end():]
+			return self._posFromXY(_cellX(m.group(1)), _cellY(m.group(2))), s[m.end():]
 		m = _RE_NAME.match(s)
 		if not m:
 			raise TclError(f'bad text index "{s}"')
@@ -499,6 +502,65 @@ class Text(_ScrollMixin, Widget):
 		parts.append(self._buf[r2][:c2])
 		return '\n'.join(parts) + trailing
 
+	def dump(self, index1, index2=None, command=None, **kw):
+		"""Return [(key, value, index), …] for the range like Tk's dump:
+		keys 'text', 'mark', 'tagon', 'tagoff' (image/window: none).
+		Options all/text/mark/tag select what is reported."""
+		want = {k for k in ('text', 'mark', 'tag') if kw.get(k)}
+		if kw.get('all') or not want:
+			want = {'text', 'mark', 'tag'}
+		a = self._parseIndex(index1)
+		if index2 is None:
+			b = self._fromOffset(self._offset(a) + 1)
+		else:
+			b = self._parseIndex(index2)
+		result = []
+		if b <= a:
+			return result
+		events = {}
+		if 'tag' in want:
+			for name in self._tagOrder:
+				for start, end in self._tagRanges.get(name, []):
+					if end <= a or start >= b:
+						continue
+					events.setdefault(max(start, a), []).append((2, 'tagon', name))
+					if end < b:
+						events.setdefault(end, []).append((0, 'tagoff', name))
+		if 'mark' in want:
+			for name, pos in self._marks.items():
+				if a <= pos < b:
+					events.setdefault(pos, []).append((1, 'mark', name))
+		points = sorted(p for p in events if a <= p < b)
+		cur = a
+		for nxt in points + [b]:
+			if nxt < cur:
+				continue
+			if 'text' in want and nxt > cur:
+				r, c = cur
+				for piece in self.get(self._toTkIndex(cur),
+						self._toTkIndex(nxt)).splitlines(True):
+					result.append(('text', piece, f'{r + 1}.{c}'))
+					if piece.endswith('\n'):
+						r, c = r + 1, 0
+					else:
+						c += len(piece)
+			for _, key, value in sorted(events.get(nxt, ())):
+				if nxt < b:
+					result.append((key, value, self._toTkIndex(nxt)))
+			cur = nxt
+		# like Tk, the implicit final newline is a chunk of its own
+		if result and b == self._parseIndex('end') and result[-1][0] == 'text' \
+				and len(result[-1][1]) > 1 and result[-1][1].endswith('\n'):
+			key, piece, idx = result.pop()
+			r, c = (int(v) for v in idx.split('.'))
+			result.append((key, piece[:-1], idx))
+			result.append((key, '\n', f'{r}.{c + len(piece) - 1}'))
+		if command is not None:
+			for item in result:
+				command(*item)
+			return None
+		return result
+
 	def index(self, idx) -> str:
 		"""Return the normalised "line.col" form of *idx*."""
 		return self._toTkIndex(self._parseIndex(idx))
@@ -557,7 +619,47 @@ class Text(_ScrollMixin, Widget):
 		if sp is None:
 			return None
 		y, x = sp
-		return (x - self._x, y - self._y, 1, 1)
+		return _pxBox((x - self._x, y - self._y, 1, 1))
+
+	def dlineinfo(self, index):
+		"""(x, y, width, height, baseline) of the display line of *index*."""
+		pos = self._clampPos(self._parseIndex(index), allowEnd=False)
+		sp  = self._screenPos(pos)
+		if sp is None:
+			return None
+		y, _ = sp
+		bd   = self._border()
+		return _pxBox((bd, y - self._y, self._width - 2 * bd, 1)) + (_core.PY - 2,)
+
+	def image_create(self, index, cnf={}, **kw):
+		"""Embedded image: occupies one character (a glyph) like in Tk."""
+		from ._image import IMAGE_GLYPH
+		self.insert(index, IMAGE_GLYPH)
+		Widget._funcSerial += 1
+		return kw.get('name') or f'image{Widget._funcSerial}'
+
+	def window_create(self, index, cnf={}, **kw):
+		"""Embedded windows are not supported: a placeholder character
+		keeps index arithmetic consistent."""
+		self.insert(index, ' ')
+
+	def image_cget(self, index, option):
+		return ''
+
+	def image_configure(self, index, cnf=None, **kw):
+		return {}
+
+	def image_names(self):
+		return ()
+
+	def window_names(self):
+		return ()
+
+	def scan_mark(self, x, y):
+		pass
+
+	def scan_dragto(self, x, y, gain=10):
+		pass
 
 	# ------------------------------------------------------------------
 	# Marks
@@ -781,10 +883,10 @@ class Text(_ScrollMixin, Widget):
 		return w if w in ('char', 'word') else 'none'
 
 	def _innerW(self) -> int:
-		return max(1, self._w - 2*self._border())
+		return max(1, self._width - 2*self._border())
 
 	def _visRows(self) -> int:
-		return max(1, self._h - 2*self._border())
+		return max(1, self._height - 2*self._border())
 
 	def _textW(self) -> int:
 		"""Width available for text (excludes the internal scrollbar)."""
@@ -794,17 +896,99 @@ class Text(_ScrollMixin, Widget):
 				return w - 1
 		return w
 
+	# ------------------------------------------------------------------
+	# Elided text (tag option elide=True): not displayed, skipped by the
+	# cursor, but still part of the text and of index arithmetic.
+	# ------------------------------------------------------------------
+
+	_NO_ELIDE = (None, '', 0, False, '0', 'false', 'no')
+
+	def _elideKey(self):
+		names = [n for n in self._tagOrder
+			if self._tagCfg.get(n, {}).get('elide') not in self._NO_ELIDE]
+		if not names:
+			return None
+		return tuple((n, tuple(self._tagRanges.get(n, ()))) for n in names)
+
+	def _elideMap(self):
+		"""{row: [(lo, hi), …]} merged elided column ranges; column
+		len(line) stands for the newline of the row."""
+		key = self._elideKey()
+		if key is None:
+			return {}
+		if getattr(self, '_elideCacheKey', None) == (self._version, key):
+			return self._elideCache
+		rows = {}
+		nbuf = len(self._buf)
+		for _, ranges in key:
+			for a, b in ranges:
+				for r in range(a[0], min(b[0], nbuf - 1) + 1):
+					lo = a[1] if r == a[0] else 0
+					hi = b[1] if r == b[0] else len(self._buf[r]) + 1
+					if hi > lo:
+						rows.setdefault(r, []).append((lo, hi))
+		for r, lst in rows.items():
+			lst.sort()
+			merged = [lst[0]]
+			for lo, hi in lst[1:]:
+				if lo <= merged[-1][1]:
+					merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+				else:
+					merged.append((lo, hi))
+			rows[r] = merged
+		self._elideCacheKey = (self._version, key)
+		self._elideCache    = rows
+		return rows
+
+	def _isElided(self, pos) -> bool:
+		r, c = pos
+		return any(lo <= c < hi for lo, hi in self._elideMap().get(r, ()))
+
+	def _rowHidden(self, r, emap=None) -> bool:
+		"""The whole row including its newline is elided."""
+		emap = self._elideMap() if emap is None else emap
+		rng  = emap.get(r)
+		return bool(rng) and rng[0][0] <= 0 and rng[0][1] > len(self._buf[r])
+
+	def _visibleCols(self, r, start, end):
+		"""Buffer columns of row *r* in [start, end) that are displayed."""
+		rng = self._elideMap().get(r)
+		if not rng:
+			return range(start, end)
+		return [c for c in range(start, end)
+			if not any(lo <= c < hi for lo, hi in rng)]
+
+	def _skipElided(self, pos, forward=True):
+		"""Move *pos* out of elided text, in the direction of motion
+		(or backwards when nothing visible follows)."""
+		if not self._elideMap():
+			return pos
+		for direction in (forward, not forward):
+			p = pos
+			while self._isElided(p):
+				off = self._offset(p) + (1 if direction else -1)
+				if off < 0 or (direction and p >= self._lastPos()):
+					break
+				p = self._fromOffset(off)
+			if not self._isElided(p):
+				return p
+		return pos
+
 	def _displayLines(self, width=None):
 		"""Return list of (row, start, end) display segments."""
 		if width is None:
 			width = self._textW()
 		mode = self._wrapMode()
-		key  = (width, mode, self._version)
+		ekey = self._elideKey()
+		key  = (width, mode, self._version, ekey)
 		cached = self._dlCache.get(key)
 		if cached is not None:
 			return cached
+		emap = self._elideMap() if ekey else {}
 		segs = []
 		for r, line in enumerate(self._buf):
+			if emap and self._rowHidden(r, emap):
+				continue
 			if mode == 'none' or len(line) <= width:
 				segs.append((r, 0, len(line)))
 				continue
@@ -850,9 +1034,11 @@ class Text(_ScrollMixin, Widget):
 		i    = self._segIndex(pos, segs)
 		if not (self._scrollY <= i < self._scrollY + self._visRows()):
 			return None
-		_, start, _ = segs[i]
+		r, start, _ = segs[i]
 		bd = self._border()
 		x  = pos[1] - start
+		if r in self._elideMap():
+			x = len(self._visibleCols(r, start, pos[1]))
 		if self._wrapMode() == 'none':
 			x -= self._scrollX
 		if not (0 <= x < self._textW()) and not (x == self._textW() and
@@ -870,12 +1056,15 @@ class Text(_ScrollMixin, Widget):
 		if self._wrapMode() == 'none':
 			dx += self._scrollX
 		c = start + dx
+		if r in self._elideMap():
+			cols = list(self._visibleCols(r, start, end))
+			c = cols[dx] if dx < len(cols) else end
 		last = i + 1 >= len(segs) or segs[i + 1][0] != r
 		c = min(c, end if last else max(start, end - 1))
 		return (r, c)
 
 	def _scrollToPos(self, pos):
-		if self._h <= 0 or self._w <= 0:
+		if self._height <= 0 or self._width <= 0:
 			return
 		segs = self._displayLines()
 		i    = self._segIndex(pos, segs)
@@ -978,19 +1167,20 @@ class Text(_ScrollMixin, Widget):
 
 		bd     = self._border()
 		relief = self._opts.get('relief', 'sunken')
-		baseFg = self._opts.get('fg') or ''
-		baseBg = self._opts.get('bg') or ''
+		baseFg = self._color('fg')
+		baseBg = self._color('bg')
 		attr   = self._getAttr()
 
-		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
+		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 		if bd > 0 and relief != 'flat':
-			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
 
 		visH   = self._visRows()
 		visW   = self._textW()
 		segs   = self._displayLines(visW)
 		sx     = self._scrollX if self._wrapMode() == 'none' else 0
 		styles = [(n, self._tagStyle(n)) for n in self._tagOrder]
+		emap   = self._elideMap()
 		app    = self._getApp()
 		attrCache = {}
 
@@ -1007,6 +1197,23 @@ class Text(_ScrollMixin, Widget):
 			if si >= len(segs):
 				break
 			r, start, end = segs[si]
+			if r in emap:
+				cols  = list(self._visibleCols(r, start, end))[sx:sx + visW]
+				line  = self._buf[r]
+				text  = ''.join(line[c] for c in cols).replace('\t', ' ')
+				cells = [(baseFg, baseBg, 0)] * len(text)
+				for name, (tfg, tbg, tflags) in styles:
+					for a, b in self._tagRanges.get(name, []):
+						if b[0] < r or a[0] > r:
+							continue
+						lo = a[1] if a[0] == r else 0
+						hi = b[1] if b[0] == r else len(line) + 1
+						for j, c in enumerate(cols):
+							if lo <= c < hi:
+								fg, bg, fl = cells[j]
+								cells[j] = (tfg or fg, tbg or bg, fl | tflags)
+				self._drawCells(scr, i, bd, text, cells, cellAttr)
+				continue
 			text  = self._buf[r][start:end][sx:sx + visW] if sx else \
 				self._buf[r][start:end][:visW]
 			text  = text.replace('\t', ' ')
@@ -1042,8 +1249,19 @@ class Text(_ScrollMixin, Widget):
 							cellAttr(self._tagStyle('sel')))
 
 		if self._showInternalBar():
-			self._drawInternalBar(scr, self._x + self._w - bd - 1,
+			self._drawInternalBar(scr, self._x + self._width - bd - 1,
 				self._y + bd, visH, attr)
+
+	def _drawCells(self, scr, i, bd, text, cells, cellAttr):
+		y = self._y + bd + i
+		x = self._x + bd
+		j = 0
+		while j < len(text):
+			k = j
+			while k < len(text) and cells[k] == cells[j]:
+				k += 1
+			_addStr(scr, y, x + j, text[j:k], cellAttr(cells[j]))
+			j = k
 
 	def _cursorPos(self):
 		"""Return screen (y, x) of cursor for Tk to position the cursor block."""
@@ -1069,8 +1287,9 @@ class Text(_ScrollMixin, Widget):
 
 	def _handleKey(self, key):
 		state = self._opts.get('state', 'normal')
-		if state == 'disabled':
-			return False
+		if state == 'disabled' and not (key in _MOVEMENT_KEYS or
+				key in _SHIFT_MAP or key in (_CTRL_A, _CTRL_E)):
+			return False		# like Tk: a disabled text still scrolls
 
 		r, c = self._cur
 
@@ -1174,6 +1393,9 @@ class Text(_ScrollMixin, Widget):
 			self._selAnchor = None
 			self._lastEdit  = None
 
+		if key in _MOVEMENT_KEYS and self._elideMap():
+			forward = key in (KEY_RIGHT, KEY_DOWN, KEY_NPAGE, KEY_END)
+			r, c = self._skipElided((r, c), forward)
 		self._cur = (r, c)
 		self._scrollToCursor()
 		self._markDirty()
@@ -1226,7 +1448,7 @@ class Text(_ScrollMixin, Widget):
 		visH    = self._visRows()
 
 		# internal scrollbar
-		barX = self._x + self._w - bd - 1
+		barX = self._x + self._width - bd - 1
 		if self._sbDrag is not None:
 			if motion or release:
 				self._barDrag(my - self._y - bd, visH)
@@ -1246,8 +1468,8 @@ class Text(_ScrollMixin, Widget):
 			elif my >= self._y + bd + visH:
 				self._scrollY += 1
 			self._clampScroll()
-		x   = max(bd, min(mx - self._x, self._w - bd - 1))
-		y   = max(bd, min(my - self._y, self._h - bd - 1))
+		x   = max(bd, min(mx - self._x, self._width - bd - 1))
+		y   = max(bd, min(my - self._y, self._height - bd - 1))
 		pos = self._posFromXY(x, y)
 		self._marks['current'] = pos
 

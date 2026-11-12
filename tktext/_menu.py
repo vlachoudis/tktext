@@ -1,5 +1,5 @@
 import curses
-from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad, _sameValue
+from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad, _sameValue, _initArgs, _cellY
 from ._events import (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END,
 	KEY_ENTER, KEY_CR, KEY_ESC, KEY_SPACE, MOTION, B1_PRESS, B1_RELEASE,
 	B1_CLICK, B1_DCLICK, isWheel)
@@ -27,7 +27,8 @@ class Menu(Widget):
 	title row.
 	"""
 
-	def __init__(self, parent=None, **kwargs):
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)
 		self._opts.update({
 			'activeforeground':	'',
@@ -40,7 +41,7 @@ class Menu(Widget):
 		kwargs.setdefault('relief', 'single')
 		kwargs.setdefault('borderwidth', 1)
 		if kwargs:
-			self.configure(**kwargs)
+			Menu.configure(self, **kwargs)
 
 		self._items       = []	# list of item dicts
 		self._active      = -1	# highlighted row index
@@ -170,6 +171,15 @@ class Menu(Widget):
 
 	entryCget = entrycget
 
+	def yposition(self, index):
+		"""Y coordinate of the top of entry *index* (screen units)."""
+		from . import _core
+		i = self.index(index)
+		return (max(0, i if i is not None else 0) + self._border()) * _core.PY
+
+	def xposition(self, index):
+		return 0
+
 	def index(self, idx: object):
 		"""Return integer index for *idx* (None for 'none')."""
 		i = self._resolveIndex(idx)
@@ -278,7 +288,7 @@ class Menu(Widget):
 		bd   = self._border()
 		subX = px + mw
 		app  = self._getApp()
-		if app is not None and subX + sub._menuWidth() > app._w:
+		if app is not None and subX + sub._menuWidth() > app._width:
 			subX = max(0, px - sub._menuWidth())
 		sub._parentMenu = self
 		sub.post(subX, py + bd + i - sub._border())
@@ -317,10 +327,10 @@ class Menu(Widget):
 		py  = self._postY
 		app = self._getApp()
 		if app is not None:
-			if px + mw > app._w:
-				px = max(0, app._w - mw)
-			if py + mh > app._h:
-				py = max(0, app._h - mh)
+			if px + mw > app._width:
+				px = max(0, app._width - mw)
+			if py + mh > app._height:
+				py = max(0, app._height - mh)
 		return px, py, mw, mh
 
 	# ------------------------------------------------------------------
@@ -345,7 +355,7 @@ class Menu(Widget):
 				except ValueError:
 					return -1
 				_, py, _, _ = self._screenRect()
-				return y - py - self._border()
+				return _cellY(y) - py - self._border()
 			for i, item in enumerate(self._items):
 				if item.get('label') == idx:
 					return i
@@ -590,7 +600,7 @@ class OptionMenu(Widget):
 		self._variable = variable
 		self._menu     = Menu(parent)
 		if kwargs:
-			self.configure(**kwargs)
+			OptionMenu.configure(self, **kwargs)
 
 		if value is not None:
 			for v in [value] + list(values):
@@ -667,13 +677,13 @@ class OptionMenu(Widget):
 		else:
 			attr = self._getAttr()
 
-		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
+		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 		if bd > 0:
-			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
 
-		cw    = max(1, self._w - 2*bd)
+		cw    = max(1, self._width - 2*bd)
 		label = _pad(self._getCurrentLabel(), max(0, cw - 2)) + ' ▼'
-		cy    = self._y + bd + (self._h - 2*bd - 1) // 2
+		cy    = self._y + bd + (self._height - 2*bd - 1) // 2
 		_addStr(scr, cy, self._x + bd, _pad(label, cw, 'left'), attr)
 
 	# ------------------------------------------------------------------
@@ -686,8 +696,8 @@ class OptionMenu(Widget):
 	def _openMenu(self):
 		app   = self._getApp()
 		menuH = self._menu._menuHeight()
-		openY = self._y + self._h
-		if app is not None and openY + menuH > app._h:
+		openY = self._y + self._height
+		if app is not None and openY + menuH > app._height:
 			openY = max(0, self._y - menuH)
 		cur = self._getCurrentLabel()
 		for i, it in enumerate(self._menu._items):

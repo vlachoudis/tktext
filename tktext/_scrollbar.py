@@ -1,4 +1,5 @@
-from ._core import Widget, _addStr
+from ._core import Widget, _addStr, _initArgs
+from . import _core
 from ._events import B1_PRESS, B1_RELEASE, B1_CLICK, MOTION, isWheel
 
 
@@ -14,7 +15,8 @@ class Scrollbar(Widget):
 	by a page and dragging the thumb calls command('moveto', fraction).
 	"""
 
-	def __init__(self, parent=None, **kwargs):
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)
 		self._opts.update({
 			'orient':	'vertical',
@@ -24,7 +26,7 @@ class Scrollbar(Widget):
 		kwargs.setdefault('relief',      'flat')
 		kwargs.setdefault('borderwidth', 0)
 		if kwargs:
-			self.configure(**kwargs)
+			Scrollbar.configure(self, **kwargs)
 		self._first	= 0.0
 		self._last	= 1.0
 		self._drag	= None	# (anchorPos, anchorFirst) while dragging
@@ -56,7 +58,7 @@ class Scrollbar(Widget):
 		return (max(3, int(self._opts.get('width') or 3)), 1)
 
 	def _length(self) -> int:
-		return self._h if self._vertical() else self._w
+		return self._height if self._vertical() else self._width
 
 	def _thumb(self):
 		"""Return (start, end) of the thumb in trough cells."""
@@ -70,6 +72,25 @@ class Scrollbar(Widget):
 			return
 		attr   = self._getAttr()
 		n      = self._length()
+		if _core.PX != 1:
+			# Tk look: grey trough, darker slider
+			tattr = self._getAttr(bg=self._opts.get('troughcolor') or '#c3c3c3')
+			sattr = self._getAttr(bg='#8c8c8c')
+			ts, te = self._thumb() if n >= 3 else (0, 0)
+			cells = []
+			for i in range(n):
+				if n >= 3 and i == 0:
+					cells.append(('▲' if self._vertical() else '◀', tattr))
+				elif n >= 3 and i == n - 1:
+					cells.append(('▼' if self._vertical() else '▶', tattr))
+				else:
+					cells.append((' ', sattr if ts <= i - 1 < te else tattr))
+			for i, (ch, a) in enumerate(cells):
+				if self._vertical():
+					_addStr(scr, self._y + i, self._x, ch, a)
+				else:
+					_addStr(scr, self._y, self._x + i, ch, a)
+			return
 		if n < 3:
 			cells = ['#'] * n
 		else:

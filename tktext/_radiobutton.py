@@ -1,5 +1,5 @@
 from ._checkbutton import Checkbutton
-from ._core import _sameValue
+from ._core import _sameValue, _initArgs
 from ._events import KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN
 
 
@@ -19,7 +19,8 @@ class Radiobutton(Checkbutton):
 	Shares rendering and input handling with Checkbutton; only the
 	indicator and the selection semantics differ."""
 
-	def __init__(self, parent=None, **kwargs):
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		kwargs.setdefault('value', '')
 		super().__init__(parent, **kwargs)
 

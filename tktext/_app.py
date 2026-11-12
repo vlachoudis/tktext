@@ -1,4 +1,6 @@
+import atexit
 import curses
+import shutil
 import sys
 import time
 import traceback
@@ -7,18 +9,22 @@ from ._colors import ColorManager
 from ._core import Widget, _fillRect, _addStr, _pad, _mouseEventNames, \
 	_newMouseEvent, _newKeyEvent
 from ._frame import Frame
+from ._toplevel import Wm
+from . import _core
 from ._layout import doPackLayout, doGridLayout, doPlaceLayout
 from ._events import KEY_TAB, KEY_BTAB, KEY_ENTER, Event, MOTION, \
 	B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, B3_ANY, isWheel
 
 
-class Tk(Frame):
+class Tk(Wm, Frame):
 	"""Root window.  Acts as the main frame and owns the event loop."""
 
-	_isRoot = True
+	_isRoot		= True
+	_isToplevel	= True
 
 	def __init__(self, screenName=None, baseName=None, className='Tk',
 			useTk=True, sync=False, use=None, **kwargs):
+		self._wmInit()
 		self._title		= 'tktext'
 		self._colors		= ColorManager()
 		self._scr		= None
@@ -34,20 +40,37 @@ class Tk(Frame):
 		self._vars		= {}
 		self._postedMenus	= []	# stack of currently visible Menu overlays
 		self._postedDialogs	= []	# stack of active modal dialogs
-		self._menuBar		= None	# Menu set with configure(menu=...)
 		self._menuBarPos	= []	# [(x0, x1, itemIndex), …] on row 0
 		self._menuBarActive	= -1
-		self._protocols		= {}
 		self._errors		= []	# formatted tracebacks of callback errors
 		self._reporting		= False
 		self._clipboard		= ''
 		self._allBindings	= Widget()	# bind_all() table
+		self._classBindings	= {}	# bind_class(): class name -> table
+		self._virtualEvents	= {}	# event_add(): <<virtual>> -> [sequences]
+		self._optionDb		= {}	# option_add() database: pattern -> value
+		self._optionCache	= {}
+		self._eventQueue	= []	# queued virtual events (widget, name, evt)
+		self._toplevels		= []	# Toplevel windows in stacking order
+		self._grab		= None	# widget holding the grab
+		self._mouseXY		= (0, 0)
+		self._hover		= None	# widget under the pointer (Enter/Leave)
+		self._ownScreen		= False	# screen started by _startScreen()
+		self._loopDepth		= 0
+		self._savedExcepthook	= None
 		super().__init__(parent=None)
 		self._opts['takefocus'] = False
-		self._w			= 80	# real size known once attached
-		self._h			= 24
+		# real size known once attached; layouts done before that (e.g.
+		# update_idletasks() before mainloop) use the terminal size
+		size			= shutil.get_terminal_size((80, 24))
+		self._width		= size.columns
+		self._height		= size.lines
+		if _core._defaultRoot is None or _core._defaultRoot._destroyed:
+			_core._defaultRoot = self
+			import tktext
+			tktext._default_root = self
 		if kwargs:
-			self.configure(**kwargs)
+			Tk.configure(self, **kwargs)
 
 		# Register as the global app so messagebox/filedialog can find us
 		import tktext._dialog as _dlg
@@ -61,73 +84,31 @@ class Tk(Frame):
 		if cnf:
 			kwargs.update(cnf)
 		if 'menu' in kwargs:
-			self._menuBar = kwargs.pop('menu')
-			self._dirty   = True
+			self._ownMenuBar = kwargs.pop('menu') or None
+			self._dirty      = True
 			if not kwargs:
 				return None
+		kwargs.pop('class_', None)
 		return super().configure(**kwargs)
 
 	config = configure
 
 	# ------------------------------------------------------------------
-	# Title / window-manager compatibility
+	# Window manager: the root is always maximised
 	# ------------------------------------------------------------------
 
-	def title(self, s=None):
-		if s is None:
-			return self._title
-		self._title = str(s)
-		self._dirty = True
+	setTitle = Wm.wm_title		# camelCase alias
 
-	setTitle	= title		# camelCase alias
-	wm_title	= title
+	@property
+	def _menuBar(self):
+		owner = self._barOwner()
+		return owner._ownMenuBar if owner is not None else None
 
-	def geometry(self, geomstr=None):
-		"""Terminal apps cannot be resized; returns the current size."""
-		return f'{self._w}x{self._h}+0+0'
+	def _isMaximised(self) -> bool:
+		return True
 
-	wm_geometry = geometry
-
-	def resizable(self, width=None, height=None):
-		pass
-
-	def minsize(self, width=None, height=None):
-		pass
-
-	def maxsize(self, width=None, height=None):
-		pass
-
-	def protocol(self, name=None, func=None):
-		"""Register a window-manager protocol handler.  WM_DELETE_WINDOW
-		is called on Ctrl-C (SIGINT) instead of quitting."""
-		if func is None:
-			return self._protocols.get(name)
-		self._protocols[name] = func
-
-	wm_protocol = protocol
-
-	def iconbitmap(self, *a, **kw):
-		pass
-
-	def iconphoto(self, *a, **kw):
-		pass
-
-	def attributes(self, *a, **kw):
-		return None
-
-	wm_attributes = attributes
-
-	def withdraw(self):
-		pass
-
-	def deiconify(self):
-		pass
-
-	def iconify(self):
-		pass
-
-	def option_add(self, *a, **kw):
-		pass
+	def _viewable(self) -> bool:
+		return self._wmState == 'normal' and not self._destroyed
 
 	def bell(self):
 		try:
@@ -135,47 +116,88 @@ class Tk(Frame):
 		except curses.error:
 			pass
 
-	# Clipboard (process local)
-	def clipboard_clear(self):
-		self._clipboard = ''
-
-	def clipboard_append(self, text):
-		self._clipboard += str(text)
-
-	def clipboard_get(self):
-		return self._clipboard
-
-	clipboardClear	= clipboard_clear
-	clipboardAppend	= clipboard_append
-	clipboardGet	= clipboard_get
 
 	# ------------------------------------------------------------------
 	# Event loop
 	# ------------------------------------------------------------------
 
 	def mainloop(self, n=0):
-		"""Start the curses event loop.  Blocks until quit()."""
+		"""Run the curses event loop until quit().
+
+		The terminal is taken over on first use (here, or earlier by a
+		modal wait_window()/wait_variable()) and restored when the
+		outermost mainloop returns."""
+		outer = self._loopDepth == 0
+		if self._scr is None:
+			self._startScreen()
 		self._quit = False
-		if self._running:
-			# Nested mainloop (e.g. called from a callback)
-			while not self._quit:
-				self._processOneEvent()
-			self._quit = False
-			return
+		self._loopDepth += 1
 		try:
-			curses.wrapper(self._run)
+			while not self._quit and self._scr is not None:
+				self._processOneEvent()
 		finally:
-			self._scr	= None
-			self._running	= False
-			self._postedMenus.clear()
-			self._postedDialogs.clear()
-			if self._errors:
-				sys.stderr.write('tktext: exceptions raised in callbacks:\n')
-				for tb in self._errors:
-					sys.stderr.write(tb)
-				self._errors.clear()
+			self._loopDepth -= 1
+			if outer and self._ownScreen:
+				self._stopScreen()
+		self._quit = False
 
 	mainLoop = mainloop	# camelCase alias
+
+	def _startScreen(self):
+		"""Initialise curses on the real terminal (tkinter starts the
+		display when Tk() is created, so modal loops may run before
+		mainloop()).  Restored by _stopScreen(), at exit, or before an
+		uncaught exception is printed."""
+		if self._scr is not None:
+			return
+		scr = curses.initscr()
+		self._ownScreen = True
+		atexit.register(self._stopScreen)
+		self._savedExcepthook = sys.excepthook
+		def hook(exc, val, tb, app=self, prev=sys.excepthook):
+			app._stopScreen()
+			prev(exc, val, tb)
+		sys.excepthook = hook
+		try:
+			self._attach(scr)
+		except BaseException:
+			self._stopScreen()
+			raise
+
+	def _stopScreen(self):
+		if not self._ownScreen:
+			return
+		self._ownScreen = False
+		scr = self._scr
+		self._scr	= None
+		self._running	= False
+		self._postedMenus.clear()
+		self._postedDialogs.clear()
+		try:
+			if scr is not None:
+				scr.keypad(False)
+			curses.echo()
+			curses.nocbreak()
+			curses.endwin()
+		except curses.error:
+			pass
+		if self._savedExcepthook is not None:
+			sys.excepthook = self._savedExcepthook
+			self._savedExcepthook = None
+		if self._errors:
+			sys.stderr.write('tktext: exceptions raised in callbacks:\n')
+			for tb in self._errors:
+				sys.stderr.write(tb)
+			self._errors.clear()
+
+	def _ensureScreen(self):
+		"""Make sure a screen exists for a modal loop; False if impossible."""
+		if self._scr is None:
+			try:
+				self._startScreen()
+			except curses.error:
+				return False
+		return True
 
 	def quit(self):
 		"""Schedule exit from mainloop."""
@@ -184,17 +206,19 @@ class Tk(Frame):
 	def destroy(self):
 		"""Destroy all widgets and leave the main loop."""
 		self._quit = True
+		self._dispatchStructure('<Destroy>')
 		for child in list(self._children):
 			child.destroy()
+		self._toplevels.clear()
 		self._focusWidget = None
+		self._destroyed   = True
 		import tktext._dialog as _dlg
 		if _dlg._currentApp is self:
 			_dlg._currentApp = None
-
-	def _run(self, stdscr):
-		self._attach(stdscr)
-		while not self._quit:
-			self._processOneEvent()
+		if _core._defaultRoot is self:
+			_core._defaultRoot = None
+			import tktext
+			tktext._default_root = None
 
 	def _attach(self, scr, initCurses=True):
 		"""Bind the application to a curses (or fake) screen."""
@@ -217,19 +241,25 @@ class Tk(Frame):
 					curses.REPORT_MOUSE_POSITION)
 			except curses.error:
 				pass
+			# let Ctrl-S / Ctrl-Q reach the application instead of the
+			# tty flow control (endwin() restores the saved tty modes)
+			try:
+				import termios
+				fd    = sys.stdin.fileno()
+				attrs = termios.tcgetattr(fd)
+				attrs[0] &= ~termios.IXON
+				termios.tcsetattr(fd, termios.TCSANOW, attrs)
+			except (ImportError, OSError, ValueError, AttributeError):
+				pass
 		scr.keypad(True)
 		scr.nodelay(False)
 		self._setCursor(0)
-		self._h, self._w = scr.getmaxyx()
-		self._layout()
-		# Set initial focus to first focusable widget
-		if self._focusWidget is None:
-			focusable = self._getAllFocusable()
-			if focusable:
-				self._setFocus(focusable[0])
+		self._height, self._width = scr.getmaxyx()
 		self._update(force=True)
 
 	def _nextTimeout(self) -> int:
+		if self._eventQueue:
+			return 0
 		if not self._afterCallbacks:
 			return -1	# block indefinitely
 		now  = time.monotonic()
@@ -257,16 +287,24 @@ class Tk(Frame):
 			self._update()
 
 	def _onInterrupt(self):
-		handler = self._protocols.get('WM_DELETE_WINDOW')
-		if callable(handler):
-			try:
-				handler()
-			except Exception:
-				self._reportException()
-		else:
-			self._quit = True
-		for d in self._postedDialogs:
-			d._dismiss(None)
+		"""Ctrl-C: dismiss dialogs, else 'close' the active window (calls
+		its WM_DELETE_WINDOW handler like the window manager would)."""
+		if self._postedDialogs:
+			for d in self._postedDialogs:
+				d._dismiss(None)
+			return
+		self._closeMenus()
+		win = self._activeWindow() or self
+		handler = win._protocols.get('WM_DELETE_WINDOW')
+		try:
+			if callable(handler):
+				_core._callback(win, handler)
+			elif win is self:
+				self._quit = True
+			else:
+				win.destroy()
+		except Exception:
+			self._reportException()
 
 	def _handleInput(self, key):
 		"""Dispatch one raw curses key code (including KEY_MOUSE/KEY_RESIZE)."""
@@ -275,7 +313,7 @@ class Tk(Frame):
 				curses.update_lines_cols()
 			except (curses.error, AttributeError):
 				pass
-			self._h, self._w = self._scr.getmaxyx()
+			self._height, self._width = self._scr.getmaxyx()
 			try:
 				self._scr.clear()
 			except curses.error:
@@ -324,6 +362,73 @@ class Tk(Frame):
 		self.report_callback_exception(exc, val, tb)
 
 	# ------------------------------------------------------------------
+	# Windows
+	# ------------------------------------------------------------------
+
+	def _windows(self):
+		"""Viewable windows (root and Toplevels), bottom to top."""
+		wins = [self] if self._viewable() else []
+		wins.extend(t for t in self._toplevels if t._viewable())
+		return wins
+
+	def _grabWindow(self):
+		g = self._grab
+		if g is None:
+			return None
+		if g._destroyed or g._getApp() is not self:
+			self._grab = None
+			return None
+		return g
+
+	def _activeWindow(self):
+		"""The window that owns the keyboard: the grab window, else the
+		topmost decorated window."""
+		g = self._grabWindow()
+		if g is not None:
+			return g.winfo_toplevel()
+		for w in reversed(self._windows()):
+			if not w._override:
+				return w
+		return None
+
+	def _barOwner(self):
+		"""Topmost maximised window: its title/menubar occupy row 0."""
+		for w in reversed(self._windows()):
+			if w._isMaximised():
+				return w
+		return None
+
+	def _windowAt(self, mx, my):
+		for w in reversed(self._windows()):
+			if w._isMapped() and w._hitTest(mx, my):
+				return w
+		return None
+
+	def _raiseWindow(self, win):
+		"""Raise *win* to the top; its transient windows stay above it
+		(like a window manager keeps dialogs above their master)."""
+		if win is self or win not in self._toplevels:
+			return
+		order = [win] + self._transientsOf(win)
+		rest  = [t for t in self._toplevels if t not in order]
+		if rest + order != self._toplevels:
+			self._toplevels = rest + order
+			self._dirty     = True
+
+	def _transientsOf(self, win):
+		"""Toplevels transient for *win* (recursively), in stacking order."""
+		result = []
+		for t in self._toplevels:
+			master = t._transientFor
+			if t is win or master is None or getattr(master, '_destroyed', True):
+				continue
+			top = master.winfo_toplevel() if hasattr(master, 'winfo_toplevel') else None
+			if top is win:
+				result.append(t)
+				result.extend(x for x in self._transientsOf(t) if x not in result)
+		return result
+
+	# ------------------------------------------------------------------
 	# Focus management
 	# ------------------------------------------------------------------
 
@@ -339,11 +444,26 @@ class Tk(Frame):
 			old._dispatch('<FocusOut>', _FocusEvent(old, 'FocusOut'))
 		if widget is not None:
 			widget._focused = True
+			top = widget.winfo_toplevel()
+			top._lastFocus = widget
 			widget._dispatch('<FocusIn>', _FocusEvent(widget, 'FocusIn'))
 		self._dirty = True
 
+	def _focusWindow(self):
+		"""Window whose widgets take part in Tab traversal."""
+		fw = self._focusWidget
+		if fw is not None and not fw._destroyed and fw._getApp() is self:
+			return fw.winfo_toplevel()
+		return self._activeWindow()
+
+	def _focusables(self, win=None):
+		win = win if win is not None else self._focusWindow()
+		if win is None:
+			return []
+		return win._getAllFocusable()
+
 	def _focusNext(self):
-		focusable = self._getAllFocusable()
+		focusable = self._focusables()
 		if not focusable:
 			return
 		if self._focusWidget in focusable:
@@ -353,7 +473,7 @@ class Tk(Frame):
 		self._setFocus(focusable[idx])
 
 	def _focusPrev(self):
-		focusable = self._getAllFocusable()
+		focusable = self._focusables()
 		if not focusable:
 			return
 		if self._focusWidget in focusable:
@@ -362,27 +482,102 @@ class Tk(Frame):
 			idx = len(focusable) - 1
 		self._setFocus(focusable[idx])
 
-	def _validateFocus(self):
-		"""Drop focus from widgets that were destroyed or became hidden."""
-		fw = self._focusWidget
-		if fw is None:
-			if self._focusLost:
-				self._focusLost = False
-				focusable = self._getAllFocusable()
-				if focusable:
-					self._setFocus(focusable[0])
+	def _focusInto(self, win):
+		"""Move the focus into window *win* (last focus or first widget)."""
+		last = win._lastFocus
+		if last is not None and not last._destroyed and \
+				last._isMapped() and win._isAncestorOf(last):
+			self._setFocus(last)
 			return
-		if fw._destroyed or fw._getApp() is not self or \
-				fw not in self._getAllFocusable():
+		focusable = win._getAllFocusable()
+		if focusable:
+			self._setFocus(focusable[0])
+		elif win is not self:
+			self._setFocus(win)
+
+	def _validateFocus(self):
+		"""Keep the focus on a live, visible widget of an active window:
+		newly mapped windows take the focus; a grab confines it."""
+		for win in self._windows():
+			if win._needFocus and win._isMapped():
+				win._needFocus = False
+				if not win._override and win is not self:
+					self._focusInto(win)
+		fw   = self._focusWidget
+		grab = self._grabWindow()
+		ok   = fw is not None and not fw._destroyed and \
+			fw._getApp() is self and fw._isMapped()
+		if ok:
+			top = fw.winfo_toplevel()
+			ok  = top._viewable() and (top is self or top in self._toplevels)
+			# the keyboard belongs to the topmost window (popups aside)
+			active = self._activeWindow()
+			if ok and active is not None and top is not active and \
+					not top._override:
+				ok = False
+		if ok and grab is not None:
+			ok = grab._isAncestorOf(fw)
+		if ok:
+			self._focusLost = False
+			return
+		if fw is not None:
 			fw._focused	  = False
 			self._focusWidget = None
-			focusable = self._getAllFocusable()
-			if focusable:
-				self._setFocus(focusable[0])
+		self._focusLost = False
+		win = self._activeWindow()
+		if win is not None:
+			self._focusInto(win)
 
 	# ------------------------------------------------------------------
 	# Input dispatch
 	# ------------------------------------------------------------------
+
+	def _optionLookup(self, className, name, option):
+		"""Value of *option* for a widget of class *className* / name
+		*name* from the option database (patterns '*Class.option',
+		'*name.option', '*option'; the most specific, latest one wins)."""
+		key = (className, name, option)
+		if key in self._optionCache:
+			return self._optionCache[key]
+		best, bestScore = None, -1
+		opt = option.lower()
+		for i, (pattern, value) in enumerate(self._optionDb.items()):
+			parts = pattern.replace('.', '*').split('*')
+			if parts[-1].lower() != opt:
+				continue
+			owner = parts[-2] if len(parts) >= 2 else ''
+			if owner == '':
+				score = 1
+			elif owner in (className, name):
+				score = 2
+			else:
+				continue
+			if score >= bestScore:
+				best, bestScore = value, score
+		self._optionCache[key] = best
+		return best
+
+	def _dispatchClass(self, widget, patterns, evt):
+		"""Fire the bind_class() handlers of *widget*'s class."""
+		table = self._classBindings.get(widget.winfo_class())
+		if table is None:
+			return None
+		_, res = table._dispatchFirst(patterns, evt)
+		return res
+
+	def _fireVirtualFor(self, widget, patterns):
+		"""Fire the virtual events (event_add) whose sequences match a key
+		press.  Only virtual events somebody bound are generated; then the
+		key is considered handled."""
+		table = self._classBindings.get(widget.winfo_class())
+		for virt, seqs in self._virtualEvents.items():
+			if not any(p in seqs for p in patterns):
+				continue
+			if widget._hasBinding(virt) or self._allBindings._hasBinding(virt) \
+					or (table is not None and table._hasBinding(virt)):
+				widget.event_generate(virt)
+				return 'break'
+		return None
 
 	_KEY_NORMALISE = {
 		127:			curses.KEY_BACKSPACE,
@@ -409,13 +604,18 @@ class Tk(Frame):
 			self._openMenuBar(0)
 			return
 
-		fw  = self._focusWidget or self
+		fw  = self._focusWidget or self._activeWindow() or self
 		evt = _newKeyEvent(fw, key)
 		pat = evt.patterns()
 
-		# 1. bindings on the widget itself
+		# 1. bindings on the widget itself, then on its class
 		_, res = fw._dispatchFirst(pat, evt)
 		if res == 'break':
+			return
+		res = self._dispatchClass(fw, pat, evt)
+		if res == 'break':
+			return
+		if self._fireVirtualFor(fw, pat) == 'break':
 			return
 
 		# 2. class behaviour
@@ -453,10 +653,10 @@ class Tk(Frame):
 		mh = menu._menuHeight()
 		px = menu._postX
 		py = menu._postY
-		if px + mw > self._w:
-			px = max(0, self._w - mw)
-		if py + mh > self._h:
-			py = max(0, self._h - mh)
+		if px + mw > self._width:
+			px = max(0, self._width - mw)
+		if py + mh > self._height:
+			py = max(0, self._height - mh)
 		return px, py, mw, mh
 
 	def _menuAt(self, mx, my):
@@ -519,6 +719,7 @@ class Tk(Frame):
 				self._menuGrab = False
 			return
 
+		self._mouseXY = (mx, my)
 		dragging = self._dragWidget is not None
 		if dragging:
 			target = self._dragWidget
@@ -526,13 +727,23 @@ class Tk(Frame):
 				self._dragWidget = None
 				return
 		else:
+			win = self._windowAt(mx, my)
+			if win is None:
+				return
+			grab = self._grabWindow()
+			if grab is not None and not grab.winfo_toplevel()._isAncestorOf(win) \
+					and not win._override:
+				if anyDown:
+					self.bell()
+				return
+			target = win._findAt(mx, my) or win
+			self._trackHover(target, mx, my)
 			if release and not clicked:
 				# release whose press we never delivered (e.g. the press
 				# closed a menu or a dialog): drop it
 				return
-			target = self._findAt(mx, my)
-			if target is None:
-				return
+			if anyDown and not win._override:
+				self._raiseWindow(win)
 			if press:
 				self._dragWidget = target
 
@@ -544,8 +755,15 @@ class Tk(Frame):
 		broken	= False
 		for alts in _mouseEventNames(bstate, dragging):
 			_, res = target._dispatchFirst(alts, evt)
+			if res != 'break':
+				res = self._dispatchClass(target, alts, evt)
 			if res == 'break':
 				broken = True
+			elif not target._destroyed:
+				# like the toplevel bindtag of tkinter
+				top = target.winfo_toplevel()
+				if top is not target:
+					top._dispatchFirst(alts, evt)
 			self._allBindings._dispatchFirst(alts, evt)
 
 		if not broken and not target._destroyed:
@@ -553,6 +771,19 @@ class Tk(Frame):
 
 		if release or clicked:
 			self._dragWidget = None
+
+	def _trackHover(self, target, mx, my):
+		"""Fire <Leave>/<Enter> when the pointer moves to another widget."""
+		old = self._hover
+		if old is target:
+			return
+		self._hover = target
+		for widget, kind in ((old, 'Leave'), (target, 'Enter')):
+			if widget is None or widget._destroyed:
+				continue
+			evt		= _newMouseEvent(widget, mx, my, 0)
+			evt.type	= kind
+			widget._dispatchFirst([f'<{kind}>', f'<Any-{kind}>'], evt)
 
 	def _closeMenus(self):
 		for m in list(self._postedMenus):
@@ -632,21 +863,69 @@ class Tk(Frame):
 			pass
 
 	def _layout(self):
-		self._doLayout(0, 0, self._w, self._h)
-		self._layoutChildren()
+		self._doLayout(0, 0, self._width, self._height)
+		if self._viewable():
+			self._layoutChildren()
+		else:
+			for c in self._children:
+				if c._geoManager is not None:
+					c._unmapTree()
+		for top in list(self._toplevels):
+			top._layoutWindow(self._width, self._height)
 		self._validateFocus()
 		self._preRender()
+		for top in self._toplevels:
+			if top._isMapped():
+				top._preRender()
+		self._fireStructureEvents()
+
+	_STRUCTURE = ('<Configure>', '<Map>', '<Unmap>', '<Visibility>', '<Expose>')
+
+	def _fireStructureEvents(self):
+		"""Fire <Configure> on geometry changes and <Map>/<Unmap> when a
+		widget appears/disappears, for widgets that bind them."""
+		pending = []
+		stack   = [self]
+		while stack:
+			w = stack.pop()
+			stack.extend(w._children)
+			if not w._bindings or not any(e in w._bindings for e in self._STRUCTURE):
+				continue
+			geom = (w._x, w._y, w._width, w._height) if w._isMapped() else None
+			if geom != w._lastGeom:
+				pending.append((w, geom, w._lastGeom))
+				w._lastGeom = geom
+		for w, geom, last in pending:
+			if w._destroyed:
+				continue
+			if geom is not None:
+				x, y, width, height = geom
+				w._fireStructure('<Configure>', x=w.winfo_x(), y=w.winfo_y(),
+					width=width, height=height)
+			if (geom is None) != (last is None):
+				if geom is None:
+					w._fireStructure('<Unmap>')
+				else:
+					w._fireStructure('<Map>')
+					w._fireStructure('<Visibility>')
+					w._fireStructure('<Expose>')
 
 	def _update(self, force=False):
-		"""Process pending layout and redraw."""
-		if self._scr is None:
-			return
+		"""Process pending layout and redraw.  Layout runs without a
+		screen too, so that winfo_* answer before mainloop()."""
 		if self._dirty or force:
-			self._dirty = False
-			self._layout()
-			self._redraw()
+			for _ in range(4):
+				self._dirty = False
+				self._layout()
+				if not self._dirty:
+					break
+			if self._scr is not None:
+				self._redraw()
 
 	def update(self):
+		"""Process pending events (queued virtual events, due timers) and
+		redraw, like tkinter's update()."""
+		self._fireAfterCallbacks()
 		self._update(force=True)
 
 	def updateIdletasks(self):
@@ -660,10 +939,14 @@ class Tk(Frame):
 			return
 		scr.erase()
 		attr = self._getAttr()
-		_fillRect(scr, 0, 0, self._h, self._w, attr=attr)
+		_fillRect(scr, 0, 0, self._height, self._width, attr=attr)
 
-		self._drawTitleBar(scr)
-		self._renderChildren(scr)
+		if self._viewable():
+			self._drawTitleBar(scr, self)
+			self._renderChildren(scr)
+		for top in list(self._toplevels):
+			if top._isMapped():
+				top.render(scr)
 
 		# Render posted menus on top of everything
 		for menu in list(self._postedMenus):
@@ -681,9 +964,9 @@ class Tk(Frame):
 			pos = fw._cursorPos()
 			if pos is not None:
 				cy, cx = pos
-				if not (fw._x <= cx < fw._x + fw._w and
-						fw._y <= cy < fw._y + fw._h and
-						0 <= cy < self._h and 0 <= cx < self._w):
+				if not (fw._x <= cx < fw._x + fw._width and
+						fw._y <= cy < fw._y + fw._height and
+						0 <= cy < self._height and 0 <= cx < self._width):
 					pos = None
 		if pos is not None:
 			self._setCursor(1)
@@ -696,10 +979,15 @@ class Tk(Frame):
 
 		scr.refresh()
 
-	def _drawTitleBar(self, scr):
+	def _drawTitleBar(self, scr, owner=None):
+		"""Draw the title (and menubar) of the maximised window *owner*
+		on row 0.  Only the topmost maximised window shows it."""
+		owner = owner if owner is not None else self
+		if owner is not self._barOwner():
+			return
 		barAttr = self._colors.getAttr('black', 'white')
-		_addStr(scr, 0, 0, ' ' * self._w, barAttr)
-		title  = f' {self._title} '
+		_addStr(scr, 0, 0, ' ' * self._width, barAttr)
+		title  = f' {owner._title} '
 		startX = 0
 		if self._menuBar is not None:
 			self._computeMenuBarPos()
@@ -714,11 +1002,11 @@ class Tk(Frame):
 					a = self._colors.getAttr('white', 'black', bold=True)
 				_addStr(scr, 0, x0, label, a)
 				startX = x1
-			titleX = max(startX + 1, self._w - len(title))
+			titleX = max(startX + 1, self._width - len(title))
 		else:
-			titleX = max(0, (self._w - len(title)) // 2)
-		if titleX < self._w:
-			_addStr(scr, 0, titleX, _pad(title, min(len(title), self._w - titleX)),
+			titleX = max(0, (self._width - len(title)) // 2)
+		if titleX < self._width:
+			_addStr(scr, 0, titleX, _pad(title, min(len(title), self._width - titleX)),
 				self._colors.getAttr('black', 'white', bold=True))
 		if not self._postedMenus:
 			self._menuBarActive = -1
@@ -740,7 +1028,7 @@ class Tk(Frame):
 			doPlaceLayout(inner, placed)
 
 	def _preferredSize(self):
-		return (self._w, self._h)
+		return (self._width, self._height)
 
 	# ------------------------------------------------------------------
 	# Timers
@@ -763,7 +1051,22 @@ class Tk(Frame):
 			item for item in self._afterCallbacks if item[1] != handle
 		]
 
+	def _fireQueuedEvents(self):
+		"""Deliver queued virtual events (in order, new ones included)."""
+		count = 0
+		while self._eventQueue and count < 1000:
+			widget, name, evt = self._eventQueue.pop(0)
+			count += 1
+			if widget._destroyed:
+				continue
+			try:
+				widget._dispatchVirtual(name, evt)
+			except Exception:
+				self._reportException()
+			self._dirty = True
+
 	def _fireAfterCallbacks(self):
+		self._fireQueuedEvents()
 		now       = time.monotonic()
 		remaining = []
 		fired     = []
@@ -776,9 +1079,10 @@ class Tk(Frame):
 		fired.sort(key=lambda item: item[0])
 		for _, _, func, args in fired:
 			try:
-				func(*args)
+				_core._callback(self, func, *args)
 			except Exception:
 				self._reportException()
+			self._fireQueuedEvents()
 		if fired:
 			self._dirty = True
 
@@ -791,8 +1095,8 @@ class _TkInner:
 	def __init__(self, tk):
 		self._x = tk._x
 		self._y = tk._y + 1		# skip title bar
-		self._w = tk._w
-		self._h = max(0, tk._h - 1)
+		self._width = tk._width
+		self._height = max(0, tk._height - 1)
 
 
 # ---------------------------------------------------------------------------

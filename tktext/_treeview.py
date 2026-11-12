@@ -1,5 +1,5 @@
 import curses
-from ._core import TclError, Widget, _addStr, _fillRect, _drawBorder, _pad, _int
+from ._core import TclError, Widget, _addStr, _fillRect, _drawBorder, _pad, _int, _initArgs, _cellsX, _cellX, _cellY, _pxBox
 from ._listbox import _ScrollMixin
 from ._events import (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT,
 	KEY_HOME, KEY_END, KEY_PPAGE, KEY_NPAGE, KEY_ENTER, KEY_SPACE,
@@ -28,7 +28,8 @@ def _asList(v):
 class Treeview(_ScrollMixin, Widget):
 	"""Hierarchical tree / table widget.  Mirrors tkinter.ttk.Treeview."""
 
-	def __init__(self, parent=None, **kwargs):
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)
 		self._opts.update({
 			'columns':		(),
@@ -66,7 +67,7 @@ class Treeview(_ScrollMixin, Widget):
 		self._sbDrag    = None
 
 		if kwargs:
-			self.configure(**kwargs)
+			Treeview.configure(self, **kwargs)
 
 	def configure(self, cnf=None, **kwargs):
 		if cnf:
@@ -112,7 +113,10 @@ class Treeview(_ScrollMixin, Widget):
 			return dict(cfg)
 		for k, v in kwargs.items():
 			if k in ('width', 'minwidth'):
-				v = _int(v, cfg.get(k, 0))
+				try:
+					v = _cellsX(v)
+				except (TclError, ValueError, TypeError):
+					v = cfg.get(k, 0)
 			cfg[k] = v
 		self._markDirty()
 		return None
@@ -150,6 +154,29 @@ class Treeview(_ScrollMixin, Widget):
 		option = {'fg': 'foreground', 'bg': 'background'}.get(option, option)
 		return self._tagCfg.get(name, {}).get(option)
 
+	def _tagNames(self):
+		names = set(self._tagCfg)
+		for n in self._items.values():
+			names.update(n.get('tags') or ())
+		return tuple(sorted(names))
+
+	def _tagAdd(self, tag, items):
+		"""Tk 8.6.9+ '$tv tag add tag items'."""
+		for iid in items:
+			node = self._items.get(str(iid))
+			if node is not None and tag not in node['tags']:
+				node['tags'] = list(node['tags']) + [tag]
+		self._markDirty()
+
+	def _tagRemove(self, tag, items=None):
+		"""'$tv tag remove tag ?items?' (all items when omitted)."""
+		targets = self._items.keys() if items is None else [str(i) for i in items]
+		for iid in targets:
+			node = self._items.get(iid)
+			if node is not None and tag in node['tags']:
+				node['tags'] = [t for t in node['tags'] if t != tag]
+		self._markDirty()
+
 	def tagHas(self, tagname, item=None):
 		if item is None:
 			return tuple(iid for iid, n in self._items.items()
@@ -170,6 +197,9 @@ class Treeview(_ScrollMixin, Widget):
 
 	def insert(self, parent, index, iid=None, **kwargs):
 		"""Insert a new item.  Return the item's iid."""
+		if iid is None and kwargs.get('id') not in (None, ''):
+			iid = kwargs.pop('id')		# tkinter passes -id too
+		kwargs.pop('id', None)
 		if iid is None:
 			while True:
 				self._iidCounter += 1
@@ -479,7 +509,7 @@ class Treeview(_ScrollMixin, Widget):
 		return 'headings' in str(self._opts.get('show', 'tree headings'))
 
 	def _visRows(self) -> int:
-		return max(0, self._h - 2*self._border() - (1 if self._hasHead() else 0))
+		return max(0, self._height - 2*self._border() - (1 if self._hasHead() else 0))
 
 	def _totalRows(self) -> int:
 		return len(self._getFlat())
@@ -488,7 +518,7 @@ class Treeview(_ScrollMixin, Widget):
 		return self._y + self._border() + (1 if self._hasHead() else 0)
 
 	def _innerW(self) -> int:
-		w = max(1, self._w - 2*self._border())
+		w = max(1, self._width - 2*self._border())
 		return w - 1 if self._showInternalBar() else w
 
 	def _preferredSize(self):
@@ -555,9 +585,9 @@ class Treeview(_ScrollMixin, Widget):
 		relief  = self._opts.get('relief', 'sunken')
 		attr    = self._getAttr()
 
-		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
+		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 		if bd > 0 and relief != 'flat':
-			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
 
 		innerX  = self._x + bd
 		innerW  = self._innerW()
@@ -615,7 +645,7 @@ class Treeview(_ScrollMixin, Widget):
 			cells(texts, dataY + rowIdx, rowAttr, anchors)
 
 		if self._showInternalBar():
-			self._drawInternalBar(scr, self._x + self._w - bd - 1, dataY, visH, attr)
+			self._drawInternalBar(scr, self._x + self._width - bd - 1, dataY, visH, attr)
 
 	# ------------------------------------------------------------------
 	# Identification
@@ -623,12 +653,14 @@ class Treeview(_ScrollMixin, Widget):
 
 	def identifyRow(self, y):
 		"""Return the iid of the row at widget-relative *y* ('' if none)."""
-		i = self._scrollY + (int(y) + self._y - self._dataY())
+		y = _cellY(y)
+		i = self._scrollY + (y + self._y - self._dataY())
 		flat = self._getFlat()
-		return flat[i][0] if 0 <= i < len(flat) and int(y) + self._y >= self._dataY() else ''
+		return flat[i][0] if 0 <= i < len(flat) and y + self._y >= self._dataY() else ''
 
 	def identifyColumn(self, x):
 		"""Return '#n' for the column at widget-relative *x*."""
+		x  = _cellX(x)
 		cx = self._border()
 		for cid, cw in self._colWidths(self._innerW()):
 			if cx <= int(x) < cx + cw:
@@ -640,7 +672,7 @@ class Treeview(_ScrollMixin, Widget):
 		return ''
 
 	def identifyRegion(self, x, y):
-		if self._hasHead() and int(y) == self._border():
+		if self._hasHead() and _cellY(y) == self._border():
 			return 'heading'
 		row = self.identifyRow(y)
 		if not row:
@@ -648,7 +680,7 @@ class Treeview(_ScrollMixin, Widget):
 		if self.identifyColumn(x) == '#0':
 			depth = dict(self._getFlat()).get(row, 0)
 			mx    = self._border() + 2 * depth
-			if mx <= int(x) < mx + 2 and self._items[row]['children']:
+			if mx <= _cellX(x) < mx + 2 and self._items[row]['children']:
 				return 'tree'
 		return 'cell'
 
@@ -672,14 +704,29 @@ class Treeview(_ScrollMixin, Widget):
 					return ''
 				y = self._dataY() - self._y + row
 				if column is None:
-					return (self._border(), y, self._innerW(), 1)
+					return _pxBox((self._border(), y, self._innerW(), 1))
 				cx = self._border()
 				cid = self._colId(column)
 				for c, cw in self._colWidths(self._innerW()):
 					if c == cid:
-						return (cx, y, cw, 1)
+						return _pxBox((cx, y, cw, 1))
 					cx += cw
 				return ''
+		return ''
+
+	def xview(self, *args):
+		"""Horizontal scrolling of a tree is not supported."""
+		if not args:
+			return (0.0, 1.0)
+		return None
+
+	def xview_moveto(self, fraction):
+		pass
+
+	def xview_scroll(self, number, what):
+		pass
+
+	def identify_element(self, x, y):
 		return ''
 
 	identify_row	= identifyRow
@@ -798,7 +845,7 @@ class Treeview(_ScrollMixin, Widget):
 			if release:
 				self._sbDrag = None
 			return True
-		if self._showInternalBar() and mx == self._x + self._w - bd - 1 and \
+		if self._showInternalBar() and mx == self._x + self._width - bd - 1 and \
 				dataY <= my < dataY + visH:
 			if press or clicked:
 				self._barClick(my - dataY, visH, press)

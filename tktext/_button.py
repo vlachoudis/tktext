@@ -1,11 +1,13 @@
-from ._core import Widget, _fillRect, _drawBorder, _drawText, _int
+from ._core import Widget, _fillRect, _drawBorder, _drawText, _int, _initArgs, _callback
+from . import _core
 from ._events import KEY_ENTER, KEY_SPACE, B1_RELEASE, B1_CLICK, MOTION
 
 
 class Button(Widget):
 	"""Clickable button widget.  Mirrors tkinter.Button."""
 
-	def __init__(self, parent=None, **kwargs):
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)
 		self._opts.update({
 			'text':			'',
@@ -21,12 +23,12 @@ class Button(Widget):
 			'default':		'normal',
 			'compound':		'none',
 			'image':		None,
-			'padx':			1,
+			'padx':			1 if _core.PX == 1 else 0,
 		})
 		kwargs.setdefault('relief', 'raised')
 		kwargs.setdefault('borderwidth', 1)
 		if kwargs:
-			self.configure(**kwargs)
+			Button.configure(self, **kwargs)
 
 	# ------------------------------------------------------------------
 
@@ -36,7 +38,7 @@ class Button(Widget):
 			return None
 		cmd = self._opts.get('command')
 		if callable(cmd):
-			return cmd()
+			return _callback(self, cmd)
 		return None
 
 	def flash(self):
@@ -45,12 +47,24 @@ class Button(Widget):
 
 	# ------------------------------------------------------------------
 
+	def _bracketed(self) -> bool:
+		"""In pixel mode a raised push button has no 3D border: it is
+		drawn as [text] instead."""
+		from . import _core
+		return _core.PX != 1 and self.winfo_class() == 'Button' and \
+			self._opts.get('relief', 'raised') not in ('flat', 'groove') and \
+			not self._cfgBorder()
+
 	def _getText(self):
+		text = self._rawText()
+		return f'[{text}]' if self._bracketed() else text
+
+	def _rawText(self):
 		tv = self._opts.get('textvariable')
 		if tv is not None and hasattr(tv, 'get'):
-			return str(tv.get())
+			return self._withImage(str(tv.get()))
 		text = self._opts.get('text')
-		return '' if text is None else str(text)
+		return self._withImage('' if text is None else str(text))
 
 	def _preferredSize(self):
 		bd    = self._cfgBorder()
@@ -58,7 +72,7 @@ class Button(Widget):
 		oh    = _int(self._opts.get('height'))
 		padx  = max(0, _int(self._opts.get('padx')))
 		pady  = max(0, _int(self._opts.get('pady')))
-		lines = self._getText().split('\n')
+		lines = self._getText().expandtabs(8).split('\n')
 		textW = max(len(l) for l in lines)
 		textH = len(lines)
 		w = (ow if ow > 0 else textW) + 2*bd + 2*padx
@@ -84,15 +98,15 @@ class Button(Widget):
 		else:
 			attr = self._getAttr()
 
-		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
+		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 
 		relief = self._opts.get('relief', 'raised')
 		if bd > 0 and relief != 'flat':
-			_drawBorder(scr, self._y, self._x, self._h, self._w, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
 
 		# Shrink padding first when the button is squeezed
-		innerW = self._w - 2*bd
-		innerH = self._h - 2*bd
+		innerW = self._width - 2*bd
+		innerH = self._height - 2*bd
 		padx   = min(padx, max(0, (innerW - 1) // 2))
 		pady   = min(pady, max(0, (innerH - 1) // 2))
 		_drawText(scr,

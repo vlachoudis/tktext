@@ -1,5 +1,5 @@
 import curses
-from ._core import Widget, _addStr, _fillRect, _pad, _clip, _int
+from ._core import Widget, _addStr, _fillRect, _pad, _clip, _int, _initArgs
 from ._events import (KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, KEY_HOME, KEY_END,
 	KEY_PPAGE, KEY_NPAGE, B1_PRESS, B1_RELEASE, B1_CLICK, MOTION, isWheel)
 
@@ -14,7 +14,8 @@ def _float(v, default):
 class Scale(Widget):
 	"""Horizontal or vertical slider widget.  Mirrors tkinter.Scale."""
 
-	def __init__(self, parent=None, **kwargs):
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)
 		self._opts.update({
 			'from_':        0.0,
@@ -37,7 +38,7 @@ class Scale(Widget):
 		self._value    = 0.0
 		self._dragging = False
 		if kwargs:
-			self.configure(**kwargs)
+			Scale.configure(self, **kwargs)
 
 		var = self._opts.get('variable')
 		if var is not None:
@@ -155,9 +156,9 @@ class Scale(Widget):
 		showval = bool(_int(self._opts.get('showvalue'), 1))
 		if self._horizontal():
 			valW = self._valueWidth() + 1 if showval else 0
-			return (self._x, self._y + label, max(2, self._w - valW))
+			return (self._x, self._y + label, max(2, self._width - valW))
 		valW = self._valueWidth() + 1 if showval else 0
-		return (self._x + valW, self._y + label, max(2, self._h - label))
+		return (self._x + valW, self._y + label, max(2, self._height - label))
 
 	def _preferredSize(self):
 		length  = max(4, _int(self._opts.get('length'), 20))
@@ -185,10 +186,10 @@ class Scale(Widget):
 		tattr   = self._getAttr(bg=self._opts.get('troughcolor')) \
 			if self._opts.get('troughcolor') else attr
 
-		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
+		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 
 		if label:
-			_addStr(scr, self._y, self._x, _pad(str(label), self._w), attr)
+			_addStr(scr, self._y, self._x, _pad(str(label), self._width), attr)
 
 		tx, ty, tlen = self._trackRect()
 		thumbI = min(tlen - 1, int(round(self._frac() * (tlen - 1))))
@@ -199,7 +200,7 @@ class Scale(Widget):
 			_addStr(scr, ty, tx + thumbI, '█', fattr)
 			if showval:
 				_addStr(scr, ty, tx + tlen + 1,
-					_clip(valStr, self._x + self._w - tx - tlen - 1), attr)
+					_clip(valStr, self._x + self._width - tx - tlen - 1), attr)
 		else:
 			for i in range(tlen):
 				_addStr(scr, ty + i, tx, '│', tattr)

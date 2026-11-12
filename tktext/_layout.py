@@ -155,8 +155,8 @@ def doPackLayout(container, children):
 
 	cavX = container._x
 	cavY = container._y
-	cavW = container._w
-	cavH = container._h
+	cavW = container._width
+	cavH = container._height
 
 	items = _packItems(children)
 	_shrinkToFit(items, cavW, cavH)
@@ -349,8 +349,8 @@ def doGridLayout(container, children, rowCfg, colCfg):
 	cy = container._y
 
 	minColW, minRowH = _gridMinSizes(children, rowCfg, colCfg)
-	colW = _distribute(minColW, container._w, colCfg)
-	rowH = _distribute(minRowH, container._h, rowCfg)
+	colW = _distribute(minColW, container._width, colCfg)
+	rowH = _distribute(minRowH, container._height, rowCfg)
 
 	# ---- compute cumulative offsets ----
 	colX = [cx]
@@ -360,8 +360,8 @@ def doGridLayout(container, children, rowCfg, colCfg):
 	for h in rowH:
 		rowY.append(rowY[-1] + h)
 
-	right  = cx + container._w
-	bottom = cy + container._h
+	right  = cx + container._width
+	bottom = cy + container._height
 
 	# ---- place each widget ----
 	for widget, opts in children:
@@ -419,8 +419,8 @@ def gridPreferredSize(children, rowCfg, colCfg):
 def doPlaceLayout(container, children):
 	cx = container._x
 	cy = container._y
-	cw = container._w
-	ch = container._h
+	cw = container._width
+	ch = container._height
 
 	for widget, opts in children:
 		pw, ph = widget._preferredSize()

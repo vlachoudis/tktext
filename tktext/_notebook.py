@@ -1,5 +1,5 @@
 import curses
-from ._core import TclError, Widget, _addStr, _fillRect, _int
+from ._core import TclError, Widget, _addStr, _fillRect, _int, _initArgs
 from ._layout import _layoutWidget
 from ._events import KEY_LEFT, KEY_RIGHT, B1_PRESS, B1_CLICK, MOTION
 
@@ -7,7 +7,8 @@ from ._events import KEY_LEFT, KEY_RIGHT, B1_PRESS, B1_CLICK, MOTION
 class Notebook(Widget):
 	"""Tabbed container widget.  Mirrors ttk.Notebook."""
 
-	def __init__(self, parent=None, **kwargs):
+	def __init__(self, parent=None, cnf=None, **kwargs):
+		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)
 		self._opts.update({
 			'padding': 0,
@@ -19,7 +20,7 @@ class Notebook(Widget):
 		self._selIdx = -1
 
 		if kwargs:
-			self.configure(**kwargs)
+			Notebook.configure(self, **kwargs)
 
 	# ------------------------------------------------------------------
 	# Public API
@@ -185,8 +186,8 @@ class Notebook(Widget):
 		pad = _int(self._opts.get('padding'))
 		return (self._x + pad,
 			self._y + 1 + pad,
-			max(0, self._w - 2*pad),
-			max(0, self._h - 1 - 2*pad))
+			max(0, self._width - 2*pad),
+			max(0, self._height - 1 - 2*pad))
 
 	def _preferredSize(self):
 		ow  = _int(self._opts.get('width'))
@@ -215,8 +216,8 @@ class Notebook(Widget):
 			x += n
 		shift = 0
 		for x0, x1, i in spans:
-			if i == self._selIdx and x1 > self._w:
-				shift = x1 - self._w
+			if i == self._selIdx and x1 > self._width:
+				shift = x1 - self._width
 		return [(self._x + x0 - shift, self._x + x1 - shift, i) for x0, x1, i in spans]
 
 	# ------------------------------------------------------------------
@@ -252,10 +253,10 @@ class Notebook(Widget):
 		if not self._isMapped():
 			return
 		attr = self._getAttr()
-		_fillRect(scr, self._y, self._x, self._h, self._w, attr=attr)
+		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 
 		# Tab bar
-		_addStr(scr, self._y, self._x, '─' * self._w, attr)
+		_addStr(scr, self._y, self._x, '─' * self._width, attr)
 		for x0, x1, i in self._tabSpans():
 			t     = self._tabs[i]
 			label = f' {t["text"]} '
@@ -268,7 +269,7 @@ class Notebook(Widget):
 			else:
 				tattr = attr | curses.A_BOLD
 			lo = max(x0, self._x)
-			hi = min(x1, self._x + self._w)
+			hi = min(x1, self._x + self._width)
 			if hi > lo:
 				_addStr(scr, self._y, lo, label[lo - x0:hi - x0], tattr)
 
