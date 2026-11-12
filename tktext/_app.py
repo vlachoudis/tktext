@@ -1,9 +1,21 @@
-import atexit
-import curses
+#
+# -*- coding: utf-8 -*-
+#
+# Copyright European Organization for Nuclear Research (CERN)
+# All rights reserved
+#
+# Please look at the supplied documentation for the user's
+# license
+#
+# Author: Vasilis.Vlachoudis@cern.ch
+# Date:   12-Nov-2026
+
 import os
-import shutil
 import sys
 import time
+import atexit
+import curses
+import shutil
 import traceback
 
 from ._colors import ColorManager

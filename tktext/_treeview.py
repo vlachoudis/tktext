@@ -1,3 +1,15 @@
+#
+# -*- coding: utf-8 -*-
+#
+# Copyright European Organization for Nuclear Research (CERN)
+# All rights reserved
+#
+# Please look at the supplied documentation for the user's
+# license
+#
+# Author: Vasilis.Vlachoudis@cern.ch
+# Date:   12-Nov-2026
+
 import curses
 from ._core import TclError, Widget, _addStr, _fillRect, _drawBorder, _pad, _int, _initArgs, _cellsX, _cellX, _cellY, _pxBox
 from ._listbox import _ScrollMixin

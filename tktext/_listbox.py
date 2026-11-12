@@ -1,4 +1,17 @@
+#
+# -*- coding: utf-8 -*-
+#
+# Copyright European Organization for Nuclear Research (CERN)
+# All rights reserved
+#
+# Please look at the supplied documentation for the user's
+# license
+#
+# Author: Vasilis.Vlachoudis@cern.ch
+# Date:   12-Nov-2026
+
 import curses
+
 from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad, _int, _initArgs, _cellY, _pxBox
 from ._events import (KEY_UP, KEY_DOWN, KEY_HOME, KEY_END, KEY_PPAGE,
 	KEY_NPAGE, KEY_ENTER, KEY_SPACE, KEY_SHIFT_UP, KEY_SHIFT_DOWN,

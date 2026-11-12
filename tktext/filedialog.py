@@ -1,3 +1,15 @@
+#
+# -*- coding: utf-8 -*-
+#
+# Copyright European Organization for Nuclear Research (CERN)
+# All rights reserved
+#
+# Please look at the supplied documentation for the user's
+# license
+#
+# Author: Vasilis.Vlachoudis@cern.ch
+# Date:   12-Nov-2026
+
 """filedialog — file and directory picker dialogs.  Mirrors tkinter.filedialog."""
 from ._dialog import _getApp, _FileDialog
 

@@ -1,5 +1,17 @@
-import curses
+#
+# -*- coding: utf-8 -*-
+#
+# Copyright European Organization for Nuclear Research (CERN)
+# All rights reserved
+#
+# Please look at the supplied documentation for the user's
+# license
+#
+# Author: Vasilis.Vlachoudis@cern.ch
+# Date:   12-Nov-2026
+
 import re
+import curses
 
 from ._core import TclError, Widget, _addStr, _fillRect, _drawBorder, _int, \
 	_newMouseEvent, _mouseEventNames, _cellX, _cellY, _pxBox

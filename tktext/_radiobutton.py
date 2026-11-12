@@ -1,3 +1,15 @@
+#
+# -*- coding: utf-8 -*-
+#
+# Copyright European Organization for Nuclear Research (CERN)
+# All rights reserved
+#
+# Please look at the supplied documentation for the user's
+# license
+#
+# Author: Vasilis.Vlachoudis@cern.ch
+# Date:   12-Nov-2026
+
 from ._checkbutton import Checkbutton
 from ._core import _sameValue, _initArgs
 from ._events import KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN

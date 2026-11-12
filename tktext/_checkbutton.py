@@ -1,3 +1,15 @@
+#
+# -*- coding: utf-8 -*-
+#
+# Copyright European Organization for Nuclear Research (CERN)
+# All rights reserved
+#
+# Please look at the supplied documentation for the user's
+# license
+#
+# Author: Vasilis.Vlachoudis@cern.ch
+# Date:   12-Nov-2026
+
 from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad, _sameValue, _int, _initArgs
 from ._events import KEY_ENTER, KEY_SPACE, B1_RELEASE, B1_CLICK, MOTION
 
