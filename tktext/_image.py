@@ -20,7 +20,7 @@ an image loaded with file= defaults to its file name.
 
 An image may also carry a one-cell ``glyph`` (``image.glyph = '▾'``): an
 image-only widget shows it instead of the alt text (whatever the image size
-or whether it is clickable), and it is drawn next to the text when
+or whether it is clickable; a 32 px icon becomes a 5x2 box ``│ + │``), and it is drawn next to the text when
 ``compound=`` puts the image beside it, e.g. the
 dropdown triangle of a menu button.  Images named like a known arrow or
 triangle (``triangle_down``, ``arrow_up`` …) get their glyph by default.
