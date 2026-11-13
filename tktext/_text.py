@@ -57,6 +57,14 @@ _RE_COUNT	= re.compile(r'\s*([+-])\s*(-?\d+)\s*([a-z]+)')
 _RE_WORD	= re.compile(r'\s*(linestart|lineend|wordstart|wordend)\b')
 
 
+# Tag ranges: per tag a sorted list of disjoint (start, end) positions, so
+# both the starts and the ends are sorted and can be searched with bisect
+def _rangeStart(rng):
+	return rng[0]
+
+def _rangeEnd(rng):
+	return rng[1]
+
 def _isWordChar(ch) -> bool:
 	return ch.isalnum() or ch == '_'
 from ._core import _initArgs
@@ -177,6 +185,36 @@ class Text(_ScrollMixin, Widget):
 		r, c = pos
 		return sum(len(self._buf[i]) + 1 for i in range(min(r, len(self._buf)))) + c
 
+	def _movePos(self, pos, n):
+		"""Position *n* characters after (n < 0: before) *pos*; same
+		result as _fromOffset(_offset(pos) + n) without walking the
+		whole buffer."""
+		buf  = self._buf
+		r, c = pos
+		if r >= len(buf):		# end: one char after the last one
+			if n >= 0:
+				return self._endPos()
+			r, c = len(buf) - 1, len(buf[-1])
+			n   += 1
+		if n >= 0:
+			while True:
+				room = len(buf[r]) - c
+				if n <= room:
+					return (r, c + n)
+				n -= room + 1
+				r += 1
+				c  = 0
+				if r >= len(buf):
+					return self._endPos()
+		n = -n
+		while n > c:
+			n -= c + 1
+			r -= 1
+			if r < 0:
+				return (0, 0)
+			c = len(buf[r])
+		return (r, c - n)
+
 	def _fromOffset(self, off):
 		if off <= 0:
 			return (0, 0)
@@ -209,7 +247,7 @@ class Text(_ScrollMixin, Widget):
 					c = pos[1] if pos[0] < len(self._buf) else 0
 					pos = (r, min(c, len(self._buf[r])))
 				else:		# chars / indices / display chars
-					pos = self._fromOffset(self._offset(pos) + n)
+					pos = self._movePos(pos, n)
 				rest = rest[m.end():]
 				continue
 			m = _RE_WORD.match(rest)
@@ -298,14 +336,15 @@ class Text(_ScrollMixin, Widget):
 		for name in self._marks:
 			self._marks[name] = adjust(self._marks[name],
 				self._gravity.get(name, 'right') == 'right')
-		for name, ranges in self._tagRanges.items():
-			newRanges = []
-			for a, b in ranges:
-				a = adjust(a, True)	# text inserted at the start is untagged
-				b = adjust(b, False)	# … and also at the end
-				if a < b:
-					newRanges.append((a, b))
-			self._tagRanges[name] = newRanges
+		# ranges are sorted and disjoint: the ones ending at or before
+		# pos are not affected (appending text costs nothing)
+		for ranges in self._tagRanges.values():
+			i = bisect.bisect_right(ranges, pos, key=_rangeEnd)
+			if i == len(ranges):
+				continue
+			# text inserted at the start or the end is untagged
+			ranges[i:] = [(adjust(a, True), adjust(b, False))
+					for a, b in ranges[i:]]
 
 	def _adjustDelete(self, a, b):
 		ar, ac = a
@@ -323,13 +362,22 @@ class Text(_ScrollMixin, Widget):
 
 		for name in self._marks:
 			self._marks[name] = adjust(self._marks[name])
-		for name, ranges in self._tagRanges.items():
+		for ranges in self._tagRanges.values():
+			i = bisect.bisect_right(ranges, a, key=_rangeEnd)
+			if i == len(ranges):
+				continue
+			# start one before: ranges brought together are merged
+			i = max(0, i - 1)
 			newRanges = []
-			for s, e in ranges:
+			for s, e in ranges[i:]:
 				s, e = adjust(s), adjust(e)
-				if s < e:
+				if s >= e:
+					continue
+				if newRanges and s <= newRanges[-1][1]:
+					newRanges[-1] = (newRanges[-1][0], e)
+				else:
 					newRanges.append((s, e))
-			self._tagRanges[name] = newRanges
+			ranges[i:] = newRanges
 
 	def _rawInsert(self, pos, text):
 		r, c   = pos
@@ -471,7 +519,9 @@ class Text(_ScrollMixin, Widget):
 			for t in tagls:
 				self._addTagRange(t, start, pos)
 		self._lastEdit = None
-		self._scrollToCursor()
+		# like Tk the view does not follow programmatic edits (scrolling
+		# here relaid the whole text out at every insert); keyboard
+		# editing scrolls in _handleKey, applications call see()
 
 	def delete(self, idx1, idx2=None):
 		"""Delete text between *idx1* and *idx2* (or one char at *idx1*)."""
@@ -479,7 +529,7 @@ class Text(_ScrollMixin, Widget):
 			return
 		a = self._parseIndex(idx1)
 		b = self._parseIndex(idx2) if idx2 is not None else \
-			self._fromOffset(self._offset(a) + 1)
+			self._movePos(a, 1)
 		a = min(a, self._lastPos())
 		b = min(b, self._lastPos())
 		if a > b:
@@ -487,7 +537,6 @@ class Text(_ScrollMixin, Widget):
 		self._beginEdit()
 		self._rawDelete(a, b)
 		self._lastEdit = None
-		self._scrollToCursor()
 
 	def replace(self, idx1, idx2, chars, *tags):
 		if self._opts.get('state') == 'disabled':
@@ -528,7 +577,7 @@ class Text(_ScrollMixin, Widget):
 			want = {'text', 'mark', 'tag'}
 		a = self._parseIndex(index1)
 		if index2 is None:
-			b = self._fromOffset(self._offset(a) + 1)
+			b = self._movePos(a, 1)
 		else:
 			b = self._parseIndex(index2)
 		result = []
@@ -751,15 +800,33 @@ class Text(_ScrollMixin, Widget):
 		b = min(b, self._endPos())
 		if a >= b:
 			return
-		ranges = self._tagRanges[name] + [(a, b)]
-		ranges.sort()
-		merged = []
-		for s, e in ranges:
-			if merged and s <= merged[-1][1]:
-				merged[-1] = (merged[-1][0], max(merged[-1][1], e))
-			else:
-				merged.append((s, e))
-		self._tagRanges[name] = merged
+		ranges = self._tagRanges[name]
+		# merge with every range overlapping or touching [a, b]
+		lo = bisect.bisect_left(ranges, a, key=_rangeEnd)
+		hi = bisect.bisect_right(ranges, b, key=_rangeStart)
+		if lo < hi:
+			a = min(a, ranges[lo][0])
+			b = max(b, ranges[hi - 1][1])
+		ranges[lo:hi] = [(a, b)]
+
+	def _rangesOnRow(self, name, r):
+		"""Tag ranges of *name* that touch text row *r*."""
+		ranges = self._tagRanges.get(name)
+		if not ranges:
+			return
+		i = bisect.bisect_left(ranges, (r, 0), key=_rangeEnd)
+		n = len(ranges)
+		while i < n and ranges[i][0][0] <= r:
+			yield ranges[i]
+			i += 1
+
+	def _tagCovers(self, name, pos) -> bool:
+		"""True when tag *name* covers the character at *pos*."""
+		ranges = self._tagRanges.get(name)
+		if not ranges:
+			return False
+		i = bisect.bisect_right(ranges, pos, key=_rangeStart) - 1
+		return i >= 0 and pos < ranges[i][1]
 
 	def tagAdd(self, name, idx1, *more):
 		"""Apply tag *name* to [idx1, idx2) (more pairs may follow)."""
@@ -769,7 +836,7 @@ class Text(_ScrollMixin, Widget):
 			if i + 1 < len(args):
 				b = self._parseIndex(args[i + 1])
 			else:
-				b = self._fromOffset(self._offset(a) + 1)
+				b = self._movePos(a, 1)
 			if name == 'sel':
 				a = min(a, self._lastPos())
 				b = min(b, self._lastPos())
@@ -782,17 +849,20 @@ class Text(_ScrollMixin, Widget):
 			return
 		a = self._parseIndex(idx1)
 		b = self._parseIndex(idx2) if idx2 is not None else \
-			self._fromOffset(self._offset(a) + 1)
+			self._movePos(a, 1)
+		if a >= b:		# like Tk: nothing to remove
+			return
+		ranges = self._tagRanges[name]
+		# only the ranges overlapping [a, b) change
+		lo  = bisect.bisect_right(ranges, a, key=_rangeEnd)
+		hi  = bisect.bisect_left(ranges, b, key=_rangeStart)
 		out = []
-		for s, e in self._tagRanges[name]:
-			if e <= a or s >= b:
-				out.append((s, e))
-				continue
+		for s, e in ranges[lo:hi]:
 			if s < a:
 				out.append((s, a))
 			if e > b:
 				out.append((b, e))
-		self._tagRanges[name] = out
+		ranges[lo:hi] = out
 		self._markDirty()
 
 	def tagDelete(self, *names):
@@ -817,23 +887,26 @@ class Text(_ScrollMixin, Widget):
 		if idx is None:
 			return tuple(self._tagOrder)
 		pos = self._parseIndex(idx)
-		return tuple(n for n in self._tagOrder
-			if any(a <= pos < b for a, b in self._tagRanges.get(n, [])))
+		return tuple(n for n in self._tagOrder if self._tagCovers(n, pos))
 
 	def tagNextrange(self, name, idx1, idx2=None):
 		a = self._parseIndex(idx1)
 		b = self._parseIndex(idx2) if idx2 is not None else self._endPos()
-		for s, e in self._tagRanges.get(name, []):
-			if s >= a and s < b:
-				return (self._toTkIndex(s), self._toTkIndex(e))
+		ranges = self._tagRanges.get(name, [])
+		i = bisect.bisect_left(ranges, a, key=_rangeStart)
+		if i < len(ranges) and ranges[i][0] < b:
+			s, e = ranges[i]
+			return (self._toTkIndex(s), self._toTkIndex(e))
 		return ()
 
 	def tagPrevrange(self, name, idx1, idx2=None):
 		a = self._parseIndex(idx1)
 		b = self._parseIndex(idx2) if idx2 is not None else (0, 0)
-		for s, e in reversed(self._tagRanges.get(name, [])):
-			if s < a and s >= b:
-				return (self._toTkIndex(s), self._toTkIndex(e))
+		ranges = self._tagRanges.get(name, [])
+		i = bisect.bisect_left(ranges, a, key=_rangeStart) - 1
+		if i >= 0 and ranges[i][0] >= b:
+			s, e = ranges[i]
+			return (self._toTkIndex(s), self._toTkIndex(e))
 		return ()
 
 	def tagRaise(self, name, aboveThis=None):
@@ -996,6 +1069,77 @@ class Text(_ScrollMixin, Widget):
 		return pos
 
 	# ------------------------------------------------------------------
+	# Left margins (tag options lmargin1 / lmargin2), like Tk: the first
+	# display line of a text line is indented by lmargin1, the wrapped
+	# continuation lines by lmargin2, both taken from the highest
+	# priority tag setting the option on the first displayed character
+	# of the display line.
+	# ------------------------------------------------------------------
+
+	_MARGIN_OPTS = ('lmargin1', 'lmargin2')
+
+	def _marginKey(self):
+		key = []
+		for n in self._tagOrder:
+			cfg = self._tagCfg.get(n, {})
+			m1  = cfg.get('lmargin1')
+			m2  = cfg.get('lmargin2')
+			if m1 in self._NO_ELIDE and m2 in self._NO_ELIDE:
+				continue
+			key.append((n, m1, m2, tuple(self._tagRanges.get(n, ()))))
+		if not key:
+			return None
+		return (_core.PX, tuple(key))
+
+	def _margins(self, key=None):
+		"""Return a function (row, start) -> left margin in cells of the
+		display line starting at (row, start), or None without margins."""
+		if key is None:
+			key = self._marginKey()
+		if key is None:
+			return None
+		full = (self._version, key, self._elideKey())
+		if getattr(self, '_marginCacheKey', None) != full:
+			self._marginCacheKey = full
+			self._marginCache    = {}
+		cache = self._marginCache
+		emap  = self._elideMap()
+		tags  = key[1]
+
+		def visible(r, c):
+			for lo, hi in emap.get(r, ()):
+				if lo <= c < hi:
+					c = hi
+			return c
+
+		def lookup(p, opt):
+			for name, m1, m2, ranges in reversed(tags):
+				val = m1 if opt == 0 else m2
+				if val in self._NO_ELIDE:
+					continue
+				i = bisect.bisect_right(ranges, (p, (1 << 60, 0))) - 1
+				if i >= 0 and ranges[i][0] <= p < ranges[i][1]:
+					try:
+						return max(0, _core._cellsX(val))
+					except (TclError, ValueError):
+						return 0
+			return 0
+
+		def margin(r, start):
+			m = cache.get((r, start))
+			if m is None:
+				c     = visible(r, start)
+				first = start == 0 or visible(r, 0) >= start
+				m     = lookup((r, c), 0 if first else 1)
+				cache[(r, start)] = m
+			return m
+		return margin
+
+	def _segMargin(self, seg) -> int:
+		fn = self._margins()
+		return fn(seg[0], seg[1]) if fn else 0
+
+	# ------------------------------------------------------------------
 	# Tab stops (options tabs= and tabstyle=), like Tk:
 	#   - tabs is a list of distances, each optionally followed by its
 	#     alignment (left, right, center, numeric);
@@ -1122,30 +1266,36 @@ class Text(_ScrollMixin, Widget):
 		"""Display x of column c inside the display segment seg."""
 		r, start, end = seg
 		c  = max(start, min(c, end))
+		m  = self._segMargin(seg)
 		xs = self._segXs(r, start, end)
 		if xs is not None:
-			return xs[c - start]
+			return m + xs[c - start]
 		if r in self._elideMap():
-			return len(self._visibleCols(r, start, c))
-		return c - start
+			return m + len(self._visibleCols(r, start, c))
+		return m + c - start
 
 	def _segCol(self, seg, dx) -> int:
 		"""Column of the display segment seg shown at display x dx."""
 		r, start, end = seg
+		dx = max(0, dx - self._segMargin(seg))
 		xs = self._segXs(r, start, end)
 		if xs is not None:
-			k = bisect.bisect_right(xs, max(0, dx)) - 1
+			k = bisect.bisect_right(xs, dx) - 1
 			return start + max(0, min(k, end - start))
 		if r in self._elideMap():
 			cols = list(self._visibleCols(r, start, end))
-			return cols[dx] if 0 <= dx < len(cols) else end
-		return start + max(0, dx)
+			return cols[dx] if dx < len(cols) else end
+		return start + dx
 
-	def _segWidth(self, seg) -> int:
+	def _segWidth(self, seg, margin=None) -> int:
+		"""Display width of seg including its left margin."""
+		if margin is None:
+			margin = self._margins()
+		m  = margin(seg[0], seg[1]) if margin else 0
 		xs = self._segXs(*seg)
-		return xs[-1] if xs is not None else seg[2] - seg[1]
+		return m + (xs[-1] if xs is not None else seg[2] - seg[1])
 
-	def _wrapTabRow(self, r, width, mode, segs):
+	def _wrapTabRow(self, r, width, mode, segs, margin=None):
 		"""Wrap row r, which contains tabs, into display segments."""
 		line = self._buf[r]
 		n    = len(line)
@@ -1154,14 +1304,15 @@ class Text(_ScrollMixin, Widget):
 			if mode == 'none':
 				segs.append((r, s, n))
 				return
+			w  = width - (margin(r, s) if margin else 0)
 			xs = self._segXs(r, s, n)
 			if xs is None:		# no more tabs
 				xs = list(range(n - s + 1))
-			if xs[-1] <= width:
+			if xs[-1] <= w:
 				segs.append((r, s, n))
 				return
 			# longest prefix that fits (at least one character)
-			e = s + max(1, bisect.bisect_right(xs, width) - 1)
+			e = s + max(1, bisect.bisect_right(xs, w) - 1)
 			if mode == 'word':
 				brk = line.rfind(' ', s, e + 1)
 				if brk > s:
@@ -1177,24 +1328,27 @@ class Text(_ScrollMixin, Widget):
 			width = self._textW()
 		mode = self._wrapMode()
 		ekey = self._elideKey()
-		key  = (width, mode, self._version, ekey, self._tabKey())
+		mkey = self._marginKey()
+		key  = (width, mode, self._version, ekey, self._tabKey(), mkey)
 		cached = self._dlCache.get(key)
 		if cached is not None:
 			return cached
 		emap = self._elideMap() if ekey else {}
+		mfn  = self._margins(mkey) if mkey else None
 		segs = []
 		for r, line in enumerate(self._buf):
 			if emap and self._rowHidden(r, emap):
 				continue
 			if '\t' in line:
-				self._wrapTabRow(r, width, mode, segs)
+				self._wrapTabRow(r, width, mode, segs, mfn)
 				continue
-			if mode == 'none' or len(line) <= width:
+			if mode == 'none' or \
+			   len(line) + (mfn(r, 0) if mfn else 0) <= width:
 				segs.append((r, 0, len(line)))
 				continue
 			s = 0
 			while s < len(line):
-				e = s + width
+				e = s + max(1, width - (mfn(r, s) if mfn else 0))
 				if e >= len(line):
 					segs.append((r, s, len(line)))
 					break
@@ -1285,7 +1439,9 @@ class Text(_ScrollMixin, Widget):
 		return self._segIndex(self._parseIndex(idx))
 
 	def xview(self, *args):
-		maxLen = max((self._segWidth((r, 0, len(l))) if '\t' in l else len(l)
+		mfn    = self._margins()
+		maxLen = max((self._segWidth((r, 0, len(l)), mfn)
+			if '\t' in l or mfn else len(l)
 			for r, l in enumerate(self._buf)), default=0)
 		visW   = self._textW()
 		if not args:
@@ -1373,6 +1529,7 @@ class Text(_ScrollMixin, Widget):
 		if bd > 0 and relief != 'flat':
 			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
 
+		self._clampScroll()		# text may have been deleted below
 		visH   = self._visRows()
 		visW   = self._textW()
 		segs   = self._displayLines(visW)
@@ -1380,6 +1537,7 @@ class Text(_ScrollMixin, Widget):
 		styles = [(n, self._tagStyle(n)) for n in self._tagOrder]
 		emap   = self._elideMap()
 		app    = self._getApp()
+		mfn    = self._margins()
 		attrCache = {}
 
 		def cellAttr(style):
@@ -1395,37 +1553,37 @@ class Text(_ScrollMixin, Widget):
 			if si >= len(segs):
 				break
 			r, start, end = segs[si]
+			# left margin: skip cs content cells, start dx0 cells in
+			m     = mfn(r, start) if mfn else 0
+			cs    = max(0, sx - m)
+			dx0   = max(0, m - sx)
+			avail = max(0, visW - dx0)
 			xs = self._segXs(r, start, end)
 			if xs is not None:
-				self._renderTabSeg(scr, i, bd, segs[si], xs, sx, visW,
-					styles, (baseFg, baseBg, 0), cellAttr)
+				self._renderTabSeg(scr, i, bd, segs[si], xs, cs, avail,
+					styles, (baseFg, baseBg, 0), cellAttr, dx0)
 				continue
 			if r in emap:
-				cols  = list(self._visibleCols(r, start, end))[sx:sx + visW]
+				cols  = list(self._visibleCols(r, start, end))[cs:cs + avail]
 				line  = self._buf[r]
 				text  = ''.join(line[c] for c in cols).replace('\t', ' ')
 				cells = [(baseFg, baseBg, 0)] * len(text)
 				for name, (tfg, tbg, tflags) in styles:
-					for a, b in self._tagRanges.get(name, []):
-						if b[0] < r or a[0] > r:
-							continue
+					for a, b in self._rangesOnRow(name, r):
 						lo = a[1] if a[0] == r else 0
 						hi = b[1] if b[0] == r else len(line) + 1
 						for j, c in enumerate(cols):
 							if lo <= c < hi:
 								fg, bg, fl = cells[j]
 								cells[j] = (tfg or fg, tbg or bg, fl | tflags)
-				self._drawCells(scr, i, bd, text, cells, cellAttr)
+				self._drawCells(scr, i, bd, text, cells, cellAttr, dx0)
 				continue
-			text  = self._buf[r][start:end][sx:sx + visW] if sx else \
-				self._buf[r][start:end][:visW]
+			text  = self._buf[r][start:end][cs:cs + avail]
 			text  = text.replace('\t', ' ')
-			c0    = start + sx
+			c0    = start + cs
 			cells = [(baseFg, baseBg, 0)] * len(text)
 			for name, (tfg, tbg, tflags) in styles:
-				for a, b in self._tagRanges.get(name, []):
-					if b[0] < r or a[0] > r:
-						continue
+				for a, b in self._rangesOnRow(name, r):
 					lo = a[1] if a[0] == r else 0
 					hi = b[1] if b[0] == r else len(self._buf[r]) + 1
 					lo = max(lo, c0) - c0
@@ -1435,7 +1593,7 @@ class Text(_ScrollMixin, Widget):
 						cells[j] = (tfg or fg, tbg or bg, fl | tflags)
 			# draw runs of equal style
 			y = self._y + bd + i
-			x = self._x + bd
+			x = self._x + bd + dx0
 			j = 0
 			while j < len(text):
 				k = j
@@ -1444,19 +1602,17 @@ class Text(_ScrollMixin, Widget):
 				_addStr(scr, y, x + j, text[j:k], cellAttr(cells[j]))
 				j = k
 			# selection covering the newline: show one highlighted cell
-			if len(text) < visW and self._tagRanges.get('sel'):
-				nl = (r, len(self._buf[r]))
-				for a, b in self._tagRanges['sel']:
-					if a <= nl < b and end == len(self._buf[r]):
-						_addStr(scr, y, x + len(text), ' ',
-							cellAttr(self._tagStyle('sel')))
+			if len(text) < avail and end == len(self._buf[r]) and \
+					self._tagCovers('sel', (r, end)):
+				_addStr(scr, y, x + len(text), ' ',
+					cellAttr(self._tagStyle('sel')))
 
 		if self._showInternalBar():
 			self._drawInternalBar(scr, self._x + self._width - bd - 1,
 				self._y + bd, visH, attr)
 
 	def _renderTabSeg(self, scr, i, bd, seg, xs, sx, visW, styles, base,
-			cellAttr):
+			cellAttr, dx0=0):
 		"""Draw display segment seg containing tabs (xs = its layout)."""
 		r, start, end = seg
 		line  = self._buf[r]
@@ -1466,9 +1622,7 @@ class Text(_ScrollMixin, Widget):
 		ncol  = end - start + (1 if hasNl else 0)
 		style = [base] * ncol
 		for name, (tfg, tbg, tflags) in styles:
-			for a, b in self._tagRanges.get(name, []):
-				if b[0] < r or a[0] > r:
-					continue
+			for a, b in self._rangesOnRow(name, r):
 				lo = max(a[1] if a[0] == r else 0, start) - start
 				hi = min(b[1] if b[0] == r else n + 1, start + ncol) - start
 				for k in range(lo, hi):
@@ -1485,16 +1639,16 @@ class Text(_ScrollMixin, Widget):
 			cells.extend([style[k]] * w)
 		text  = ''.join(chars)[sx:sx + visW]
 		cells = cells[sx:sx + visW]
-		self._drawCells(scr, i, bd, text, cells, cellAttr)
+		self._drawCells(scr, i, bd, text, cells, cellAttr, dx0)
 		# selection covering the newline: show one highlighted cell
 		if hasNl and len(text) < visW and style[-1] != base and \
-				any(a <= (r, n) < b for a, b in self._tagRanges.get('sel', ())):
-			_addStr(scr, self._y + bd + i, self._x + bd + len(text), ' ',
+				self._tagCovers('sel', (r, n)):
+			_addStr(scr, self._y + bd + i, self._x + bd + dx0 + len(text), ' ',
 				cellAttr(self._tagStyle('sel')))
 
-	def _drawCells(self, scr, i, bd, text, cells, cellAttr):
+	def _drawCells(self, scr, i, bd, text, cells, cellAttr, dx0=0):
 		y = self._y + bd + i
-		x = self._x + bd
+		x = self._x + bd + dx0
 		j = 0
 		while j < len(text):
 			k = j
@@ -1590,7 +1744,7 @@ class Text(_ScrollMixin, Widget):
 			if sel:
 				self._deleteSelection()
 			elif (r, c) > (0, 0):
-				prev = self._fromOffset(self._offset((r, c)) - 1)
+				prev = self._movePos((r, c), -1)
 				self._beginEdit('delete')
 				self._rawDelete(prev, (r, c))
 			r, c = self._cur
@@ -1598,14 +1752,14 @@ class Text(_ScrollMixin, Widget):
 			if sel:
 				self._deleteSelection()
 			elif (r, c) < self._lastPos():
-				nxt = self._fromOffset(self._offset((r, c)) + 1)
+				nxt = self._movePos((r, c), 1)
 				self._beginEdit('delete')
 				self._rawDelete((r, c), nxt)
 			r, c = self._cur
 		elif key == _CTRL_K:
 			self._beginEdit()
 			end = (r, len(self._buf[r])) if c < len(self._buf[r]) else \
-				min(self._fromOffset(self._offset((r, c)) + 1), self._lastPos())
+				min(self._movePos((r, c), 1), self._lastPos())
 			self._rawDelete((r, c), end)
 			r, c = self._cur
 		elif key == KEY_ENTER:
@@ -1671,7 +1825,7 @@ class Text(_ScrollMixin, Widget):
 		if not self._tagBinds:
 			return
 		names = [n for n in self._tagOrder if n in self._tagBinds and
-			any(a <= pos < b for a, b in self._tagRanges.get(n, []))]
+			self._tagCovers(n, pos)]
 		if not names:
 			return
 		evt = _newMouseEvent(self, mx, my, bstate)
@@ -1683,6 +1837,10 @@ class Text(_ScrollMixin, Widget):
 						for f in funcs:
 							f(evt)
 						break
+
+	def _dragLost(self):
+		self._mouseDown = False
+		self._sbDrag    = None
 
 	def _handleMouse(self, mx, my, bstate):
 		bd    = self._border()

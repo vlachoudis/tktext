@@ -26,7 +26,8 @@ from ._toplevel import Wm
 from . import _core
 from ._layout import doPackLayout, doGridLayout, doPlaceLayout
 from ._events import KEY_TAB, KEY_BTAB, KEY_ENTER, Event, MOTION, \
-	B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, B3_ANY, isWheel
+	B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, B3_ANY, isWheel, \
+	decodeEscape, decodeExtended, isModified
 
 
 class Tk(Wm, Frame):
@@ -280,8 +281,9 @@ class Tk(Wm, Frame):
 
 	def _attach(self, scr, initCurses=True):
 		"""Bind the application to a curses (or fake) screen."""
-		self._scr	= scr
-		self._running	= True
+		self._scr		= scr
+		self._running		= True
+		self._pendingKeys	= []	# read ahead while decoding escapes
 		if initCurses:
 			self._colors.init()
 			try:
@@ -329,9 +331,8 @@ class Tk(Wm, Frame):
 		scr = self._scr
 		if scr is None:
 			return
-		scr.timeout(self._nextTimeout())
 		try:
-			key = scr.getch()
+			key = self._readKey(scr)
 		except KeyboardInterrupt:
 			key = -1
 			self._onInterrupt()
@@ -343,6 +344,61 @@ class Tk(Wm, Frame):
 			self._reportException()
 		if self._dirty:
 			self._update()
+
+	def _readKey(self, scr):
+		"""Return the next key, decoding the modified special keys the
+		terminfo entry does not know (e.g. Super-Right = ESC [1;9C under
+		TERM=screen arrives as six separate characters)."""
+		pending = getattr(self, '_pendingKeys', None)
+		if pending:
+			return pending.pop(0)
+		scr.timeout(self._nextTimeout())
+		key = scr.getch()
+		if key == 27:
+			return self._readEscape(scr)
+		if key > 0x1ff:
+			try:
+				name = curses.keyname(key).decode()
+			except (curses.error, ValueError, AttributeError):
+				return key
+			ext = decodeExtended(name)
+			if ext is not None:
+				return ext
+		return key
+
+	def _readEscape(self, scr):
+		"""ESC was read: collect a following CSI/SS3 sequence that is
+		already buffered.  Returns the decoded key, -1 for an unknown
+		sequence (swallowed instead of typed) or 27 for a lone Escape."""
+		seq = ''
+		scr.timeout(0)
+		try:
+			while len(seq) < 16:
+				try:
+					ch = scr.getch()
+				except KeyboardInterrupt:	# fake screen: queue empty
+					ch = -1
+				if ch == -1:
+					break
+				if not seq and ch not in (ord('['), ord('O')):
+					self._pendingKeys.append(ch)
+					break
+				if not 0 <= ch < 128:
+					self._pendingKeys.append(ch)
+					break
+				seq += chr(ch)
+				# final byte of the sequence
+				if len(seq) > 1 and 0x40 <= ch <= 0x7e:
+					break
+		finally:
+			scr.timeout(self._nextTimeout())
+		if not seq:
+			return 27
+		if len(seq) == 1:			# ESC [ / ESC O typed by hand
+			self._pendingKeys.append(ord(seq))
+			return 27
+		key = decodeEscape(seq)
+		return -1 if key is None else key
 
 	def _onInterrupt(self):
 		"""Ctrl-C: dismiss dialogs, else 'close' the active window (calls
@@ -694,7 +750,8 @@ class Tk(Wm, Frame):
 			return
 
 		# 2. class behaviour
-		consumed = fw is not self and fw._handleKey(key)
+		consumed = fw is not self and not isModified(key) and \
+			fw._handleKey(key)
 
 		# 3. unconsumed: bubble the bindings up through the ancestors
 		#    (the first ancestor with a matching binding handles it; like
@@ -796,6 +853,9 @@ class Tk(Wm, Frame):
 
 		self._mouseXY = (mx, my)
 		dragging = self._dragWidget is not None
+		if dragging and (press or clicked) and self._staleDrag(mx, my):
+			self._dragLost()
+			dragging = False
 		if dragging:
 			target = self._dragWidget
 			if target._destroyed:
@@ -852,6 +912,30 @@ class Tk(Wm, Frame):
 
 		if release or clicked:
 			self._dragWidget = None
+
+	def _staleDrag(self, mx, my) -> bool:
+		"""A button press arrived while a drag is active: True when the
+		release that should have ended the drag was lost (terminals drop
+		it, e.g. when the button is let go outside the window or input
+		arrives while the program is busy).  Some terminals re-send the
+		press on motion, so only a press out of the drag widget's reach
+		counts: one that a grab excludes or that lands on another window."""
+		drag = self._dragWidget
+		if drag._destroyed:
+			return False		# dropped by the drag branch below
+		top  = drag.winfo_toplevel()
+		grab = self._grabWindow()
+		if grab is not None and not grab.winfo_toplevel()._isAncestorOf(drag):
+			return True
+		win = self._windowAt(mx, my)
+		return win is not None and win is not top
+
+	def _dragLost(self):
+		"""End the current drag whose release never arrived."""
+		drag             = self._dragWidget
+		self._dragWidget = None
+		if not drag._destroyed:
+			drag._dragLost()
 
 	def _trackHover(self, target, mx, my):
 		"""Fire <Leave>/<Enter> when the pointer moves to another widget."""

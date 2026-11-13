@@ -1811,6 +1811,11 @@ class Widget:
 		app = self._getApp()
 		return app is not None and app._dragWidget is self
 
+	def _dragLost(self):
+		"""The release ending this widget's drag never arrived (the
+		terminal dropped it): forget any half-finished drag state."""
+		pass
+
 
 def _mouseEventNames(bstate, dragging) -> list:
 	"""Return the binding names (in firing order) for a curses bstate.

@@ -11,6 +11,7 @@
 # Date:   12-Nov-2026
 
 import curses
+from . import _core
 from ._core import TclError, Widget, _addStr, _fillRect, _drawBorder, _pad, _int, _initArgs, _cellsX, _cellX, _cellY, _pxBox
 from ._listbox import _ScrollMixin
 from ._events import (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT,
@@ -47,7 +48,7 @@ class Treeview(_ScrollMixin, Widget):
 			'columns':		(),
 			'show':			'tree headings',
 			'selectmode':		'extended',
-			'displaycolumns':	'#all',
+			'displaycolumns':	('#all',),
 			'height':		10,
 			'yscrollcommand':	None,
 			'xscrollcommand':	None,
@@ -120,9 +121,9 @@ class Treeview(_ScrollMixin, Widget):
 		cfg = self._colCfg.setdefault(cid, {'width': 15, 'minwidth': 4,
 			'stretch': True, 'anchor': 'w', 'id': cid})
 		if option:
-			return cfg.get(option)
+			return self._colReport(cfg).get(option)
 		if not kwargs:
-			return dict(cfg)
+			return self._colReport(cfg)
 		for k, v in kwargs.items():
 			if k in ('width', 'minwidth'):
 				try:
@@ -132,6 +133,16 @@ class Treeview(_ScrollMixin, Widget):
 			cfg[k] = v
 		self._markDirty()
 		return None
+
+	@staticmethod
+	def _colReport(cfg: dict) -> dict:
+		"""Column options as reported to the program: widths are kept
+		in cells but tkinter programs see pixels"""
+		result = dict(cfg)
+		for k in ('width', 'minwidth'):
+			if isinstance(result.get(k), int):
+				result[k] *= _core.PX
+		return result
 
 	def heading(self, col, option=None, **kwargs):
 		"""Configure or query column heading *col*."""
@@ -833,6 +844,9 @@ class Treeview(_ScrollMixin, Widget):
 		elif flatIdx >= self._scrollY + visH:
 			self._scrollY = flatIdx - visH + 1
 		self._clampScroll()
+
+	def _dragLost(self):
+		self._sbDrag = None
 
 	def _handleMouse(self, mx, my, bstate):
 		wheel = isWheel(bstate)

@@ -551,6 +551,9 @@ class Listbox(_ScrollMixin, Widget):
 			self._scrollY = idx - visH + 1
 		self._clampScroll()
 
+	def _dragLost(self):
+		self._sbDrag = None
+
 	def _handleMouse(self, mx, my, bstate):
 		if self._opts.get('state') == 'disabled':
 			return False

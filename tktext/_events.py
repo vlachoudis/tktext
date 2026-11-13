@@ -12,6 +12,7 @@
 
 import curses
 import time as _time
+import itertools as _itertools
 
 # Useful key constants
 KEY_UP		= curses.KEY_UP
@@ -63,14 +64,15 @@ _SYMS = {
 	9:			'Tab',
 	353:			'BackTab',
 	32:			'space',
-	KEY_SHIFT_UP:		'Shift_Up',
-	KEY_SHIFT_DOWN:		'Shift_Down',
-	KEY_SHIFT_LEFT:		'Shift_Left',
-	KEY_SHIFT_RIGHT:	'Shift_Right',
-	KEY_SHIFT_HOME:		'Shift_Home',
-	KEY_SHIFT_END:		'Shift_End',
-	KEY_SHIFT_PPAGE:	'Shift_Prior',
-	KEY_SHIFT_NPAGE:	'Shift_Next',
+	# like Tk the keysym of a shifted key is the plain name (state=Shift)
+	KEY_SHIFT_UP:		'Up',
+	KEY_SHIFT_DOWN:		'Down',
+	KEY_SHIFT_LEFT:		'Left',
+	KEY_SHIFT_RIGHT:	'Right',
+	KEY_SHIFT_HOME:		'Home',
+	KEY_SHIFT_END:		'End',
+	KEY_SHIFT_PPAGE:	'Prior',
+	KEY_SHIFT_NPAGE:	'Next',
 }
 for _i in range(12):
 	_SYMS[curses.KEY_F1 + _i] = f'F{_i + 1}'
@@ -162,6 +164,113 @@ class Event:
 # Modifier state bits (tkinter values)
 STATE_SHIFT	= 0x0001
 STATE_CONTROL	= 0x0004
+STATE_ALT	= 0x0008	# Mod1
+STATE_MOD4	= 0x0040	# Super / Windows key
+
+# Binding names of the modifiers, most common spelling first
+_MOD_NAMES = (
+	(STATE_CONTROL,	('Control',)),
+	(STATE_ALT,	('Alt', 'Mod1')),
+	(STATE_MOD4,	('Mod4', 'Super')),
+	(STATE_SHIFT,	('Shift',)),
+)
+
+
+class ModKey(int):
+	"""A special key pressed with modifiers (e.g. Super-Right): compares
+	equal to its plain curses key code and carries the Tk state bits."""
+
+	def __new__(cls, key, state):
+		obj		= super().__new__(cls, key)
+		obj.state	= state
+		return obj
+
+	def __repr__(self):
+		return f'ModKey({int(self)}, {self.state:#x})'
+
+
+def isModified(key) -> bool:
+	"""True for a key carrying modifiers other than Shift: the widgets'
+	class behaviour must not treat it as the plain key."""
+	return isinstance(key, ModKey) and bool(key.state & ~STATE_SHIFT)
+
+
+# xterm "1;<m>X" / "<n>;<m>~" sequences: final letter or number → key
+_CSI_LETTER = {
+	'A': curses.KEY_UP,	'B': curses.KEY_DOWN,
+	'C': curses.KEY_RIGHT,	'D': curses.KEY_LEFT,
+	'H': curses.KEY_HOME,	'F': curses.KEY_END,
+	'P': curses.KEY_F1,	'Q': curses.KEY_F1 + 1,
+	'R': curses.KEY_F1 + 2,	'S': curses.KEY_F1 + 3,
+}
+_CSI_TILDE = {
+	1: curses.KEY_HOME,	2: curses.KEY_IC,	3: curses.KEY_DC,
+	4: curses.KEY_END,	5: curses.KEY_PPAGE,	6: curses.KEY_NPAGE,
+	7: curses.KEY_HOME,	8: curses.KEY_END,
+	11: curses.KEY_F1,	12: curses.KEY_F1 + 1,	13: curses.KEY_F1 + 2,
+	14: curses.KEY_F1 + 3,	15: curses.KEY_F1 + 4,	17: curses.KEY_F1 + 5,
+	18: curses.KEY_F1 + 6,	19: curses.KEY_F1 + 7,	20: curses.KEY_F1 + 8,
+	21: curses.KEY_F1 + 9,	23: curses.KEY_F1 + 10,	24: curses.KEY_F1 + 11,
+}
+# ncurses extended key names (TERM=xterm: kRIT5 = Control-Right …)
+_EXT_NAMES = {
+	'kUP': curses.KEY_UP,	'kDN': curses.KEY_DOWN,
+	'kLFT': curses.KEY_LEFT,	'kRIT': curses.KEY_RIGHT,
+	'kHOM': curses.KEY_HOME,	'kEND': curses.KEY_END,
+	'kPRV': curses.KEY_PPAGE,	'kNXT': curses.KEY_NPAGE,
+	'kIC': curses.KEY_IC,	'kDC': curses.KEY_DC,
+}
+_SHIFT_CODE = {
+	curses.KEY_UP:		KEY_SHIFT_UP,	curses.KEY_DOWN:	KEY_SHIFT_DOWN,
+	curses.KEY_LEFT:	KEY_SHIFT_LEFT,	curses.KEY_RIGHT:	KEY_SHIFT_RIGHT,
+	curses.KEY_HOME:	KEY_SHIFT_HOME,	curses.KEY_END:		KEY_SHIFT_END,
+	curses.KEY_PPAGE:	KEY_SHIFT_PPAGE,	curses.KEY_NPAGE:	KEY_SHIFT_NPAGE,
+}
+
+
+def _modifiedKey(key, mod):
+	"""Return *key* with the xterm modifier parameter *mod* (1 + bits:
+	1 Shift, 2 Alt, 4 Control, 8 Meta/Super)."""
+	bits  = max(0, mod - 1)
+	state = 0
+	if bits & 1: state |= STATE_SHIFT
+	if bits & 2: state |= STATE_ALT
+	if bits & 4: state |= STATE_CONTROL
+	if bits & 8: state |= STATE_MOD4
+	if state == 0:
+		return key
+	if state == STATE_SHIFT and key in _SHIFT_CODE:
+		return _SHIFT_CODE[key]		# keep the plain curses shift codes
+	return ModKey(key, state)
+
+
+def decodeEscape(seq: str):
+	"""Decode the body of an escape sequence (the characters after ESC,
+	e.g. '[1;9C') into a key, or None if it is not a known key."""
+	if len(seq) < 2 or seq[0] not in '[O':
+		return None
+	final  = seq[-1]
+	params = seq[1:-1].split(';') if len(seq) > 2 else []
+	try:
+		nums = [int(p) if p else 1 for p in params]
+	except ValueError:
+		return None
+	mod = nums[1] if len(nums) > 1 else 1
+	if seq[0] == 'O' and len(nums) == 1:
+		mod = nums[0]			# SS3 form: ESC O 5 C
+	if final in _CSI_LETTER:
+		return _modifiedKey(_CSI_LETTER[final], mod)
+	if final == '~' and nums and nums[0] in _CSI_TILDE:
+		return _modifiedKey(_CSI_TILDE[nums[0]], mod)
+	return None
+
+
+def decodeExtended(name: str):
+	"""Decode an ncurses extended key name ('kRIT5') into a key, or None."""
+	base = name.rstrip('0123456789')
+	if base not in _EXT_NAMES or base == name:
+		return None
+	return _modifiedKey(_EXT_NAMES[base], int(name[len(base):]))
 
 
 class KeyEvent(Event):
@@ -186,6 +295,8 @@ class KeyEvent(Event):
 				self.state = STATE_CONTROL
 			if key in _SHIFTED:
 				self.state = STATE_SHIFT
+			if isinstance(key, ModKey):
+				self.state = key.state
 		else:
 			self.char = str(key)
 		if len(self.char) == 1 and self.char.isprintable():
@@ -196,6 +307,15 @@ class KeyEvent(Event):
 		key	= self.keycode
 		sym	= self.keysym
 		result	= []
+		if isModified(key):
+			# every spelling and order of the modifiers, e.g. <Mod4-Right>
+			names = [n for bit, n in _MOD_NAMES if key.state & bit]
+			for combo in _itertools.product(*names):
+				for perm in _itertools.permutations(combo):
+					mods = '-'.join(perm)
+					result += [f'<{mods}-{sym}>', f'<{mods}-Key-{sym}>',
+						f'<{mods}-KeyPress-{sym}>']
+			return result + ['<Key>', '<KeyPress>']
 		if self.state & STATE_CONTROL:
 			result += [f'<Control-{sym}>', f'<Control-Key-{sym}>',
 				f'<Control-KeyPress-{sym}>']

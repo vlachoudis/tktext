@@ -467,6 +467,9 @@ class Entry(Widget):
 	# Mouse input
 	# ------------------------------------------------------------------
 
+	def _dragLost(self):
+		self._mouseDown = False
+
 	def _handleMouse(self, mx: int, my: int, bstate: int) -> bool:
 		bd      = self._border()
 		release = bool(bstate & (B1_RELEASE | B1_CLICK))
