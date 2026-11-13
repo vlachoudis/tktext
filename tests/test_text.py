@@ -37,6 +37,16 @@ class TextIndexTest(unittest.TestCase):
 		self.assertEqual(t.index('1.4 +1 lines'), '2.4')
 		self.assertEqual(t.get('1.0', '1.0 lineend'), 'hello world')
 
+	def test_display_lines(self):
+		root, scr, t = makeText('hello world\nsecond line\nab')
+		self.assertEqual(t.index('1.4 +1 displaylines'), '2.4')
+		self.assertEqual(t.index('2.4 - 1 displaylines'), '1.4')
+		self.assertEqual(t.index('2.9 +1 display lines'), '3.2')
+		self.assertEqual(t.index('1.4 -1 displaylines'), '1.4')
+		root, scr, t = makeText('a' * 30 + '\nxy', wrap='char')
+		self.assertEqual(t.index('1.3 +1 displaylines'), '1.23')	# wrapped row
+		self.assertEqual(t.index('1.23 +1 displaylines'), '2.2')
+
 	def test_insert_mark_and_tags(self):
 		root, scr, t = makeText()
 		t.insert('end', 'ab', ('bold',), 'cd')

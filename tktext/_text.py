@@ -61,7 +61,7 @@ _CTRL_K	= 11	# delete to end of line
 _RE_LINECOL	= re.compile(r'(\d+)\.(\d+|end)')
 _RE_AT		= re.compile(r'@(-?\d+),(-?\d+)')
 _RE_NAME	= re.compile(r'[^\s+\-]+')
-_RE_COUNT	= re.compile(r'\s*([+-])\s*(-?\d+)\s*([a-z]+)')
+_RE_COUNT	= re.compile(r'\s*([+-])\s*(-?\d+)\s*(?:(display|any)\s+)?([a-z]+)')
 _RE_WORD	= re.compile(r'\s*(linestart|lineend|wordstart|wordend)\b')
 
 
@@ -258,9 +258,12 @@ class Text(_ScrollMixin, Widget):
 		while rest.strip():
 			m = _RE_COUNT.match(rest)
 			if m:
-				sign, num, unit = m.groups()
+				sign, num, sub, unit = m.groups()
 				n = int(num) * (-1 if sign == '-' else 1)
-				if unit.startswith('l'):
+				if unit.startswith('displayl') or \
+				   (sub == 'display' and unit.startswith('l')):
+					pos = self._moveDisplayLines(pos, n)
+				elif unit.startswith('l'):
 					r = max(0, min(pos[0] + n, len(self._buf) - 1))
 					c = pos[1] if pos[0] < len(self._buf) else 0
 					pos = (r, min(c, len(self._buf[r])))
@@ -1881,11 +1884,21 @@ class Text(_ScrollMixin, Widget):
 	# ------------------------------------------------------------------
 
 	def _moveVertical(self, pos, delta):
+		if self._wantCol is None:
+			segs = self._displayLines()
+			self._wantCol = self._segX(segs[self._segIndex(pos, segs)], pos[1])
+		return self._moveDisplayLines(pos, delta, self._wantCol)
+
+	def _moveDisplayLines(self, pos, delta, col=None):
+		"""Position *delta* display lines away from *pos*, keeping the
+		screen column *col* (default the one of pos)"""
+		pos  = self._clampPos(pos)
 		segs = self._displayLines()
-		i    = self._segIndex(pos, segs)
-		col  = self._wantCol if self._wantCol is not None else \
-			self._segX(segs[i], pos[1])
-		self._wantCol = col
+		if not segs:
+			return pos
+		i = self._segIndex(pos, segs)
+		if col is None:
+			col = self._segX(segs[i], pos[1])
 		j = max(0, min(i + delta, len(segs) - 1))
 		r, start, end = segs[j]
 		last = j + 1 >= len(segs) or segs[j + 1][0] != r
