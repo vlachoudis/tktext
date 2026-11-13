@@ -136,7 +136,7 @@ class Listbox(_ScrollMixin, Widget):
 		kwargs.setdefault('width', 20)
 		kwargs.setdefault('height', 10)
 
-		self._lbItems  = []		# list of str
+		self._lbItems  = []		# items as inserted, str() when drawn (like Tk)
 		self._itemCfg  = {}		# index -> {'fg':…, 'bg':…}
 		self._sel      = set()		# set of selected indices
 		self._active   = 0		# active (cursor) index
@@ -194,7 +194,7 @@ class Listbox(_ScrollMixin, Widget):
 			pos = max(0, min(self._resolveIdx(idx), len(self._lbItems)))
 		n = len(elements)
 		for i, elem in enumerate(elements):
-			self._lbItems.insert(pos + i, str(elem))
+			self._lbItems.insert(pos + i, elem)
 
 		# Shift indices after the insertion point
 		self._sel     = {(s + n if s >= pos else s) for s in self._sel}
@@ -385,7 +385,7 @@ class Listbox(_ScrollMixin, Widget):
 		ow = _int(self._opts.get('width'), 20)
 		oh = _int(self._opts.get('height'), 10)
 		if ow <= 0:
-			ow = max((len(s) for s in self._lbItems), default=1)
+			ow = max((len(str(s)) for s in self._lbItems), default=1)
 		if oh <= 0:
 			oh = max(1, len(self._lbItems))
 		return (ow + 2*bd, oh + 2*bd)
@@ -427,7 +427,7 @@ class Listbox(_ScrollMixin, Widget):
 			itemIdx = self._scrollY + i
 			if itemIdx >= len(self._lbItems):
 				break
-			text       = _pad(self._lbItems[itemIdx], visW)
+			text       = _pad(str(self._lbItems[itemIdx]), visW)
 			isSelected = itemIdx in self._sel
 			isActive   = itemIdx == self._active and self._focused
 
