@@ -488,6 +488,25 @@ class TextTagRangeTest(unittest.TestCase):
 		t.insert('1.0', 'a\nb')			# shifts the row
 		self.assertEqual(t.tag_ranges('x'), ('2.4', '2.7'))
 
+	def test_insert_with_taglist_inside_range_splits_it(self):
+		# like Tk: a tagList gives exactly those tags, even inside a range
+		root, scr, t = makeText('')
+		t.insert('1.0', 'abcdef', 'x')
+		t.insert('1.2', 'ZZ', 'y')
+		self.assertEqual(t.tag_ranges('x'), ('1.0', '1.2', '1.4', '1.8'))
+		self.assertEqual(t.tag_ranges('y'), ('1.2', '1.4'))
+		t.insert('1.1', 'Q', '')		# empty tagList: untagged
+		self.assertEqual(t.tag_ranges('x'), ('1.0', '1.1', '1.2', '1.3', '1.5', '1.9'))
+
+	def test_insert_segments_before_touching_range(self):
+		# flair InputPage redraws a card in front of the next card's id:
+		# the segments after the first must not join the touching range
+		root, scr, t = makeText('')
+		t.insert('1.0', 'ab\ncd\n', 'x')
+		t.tk.call(t._w, 'insert', '1.0', 'id\n', 'x', 'body\n', '', 'more', 'y')
+		self.assertEqual(t.tag_ranges('x'), ('1.0', '2.0', '3.4', '5.0'))
+		self.assertEqual(t.tag_ranges('y'), ('3.0', '3.4'))
+
 	def test_delete_merges_touching_ranges(self):
 		root, scr, t = makeText('aaXbb')
 		t.tag_add('x', '1.0', '1.2')

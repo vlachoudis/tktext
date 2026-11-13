@@ -127,6 +127,9 @@ tktext/
   _menu.py           # Menu (overlay popup / menubar) + OptionMenu
   _misc.py           # Separator, Progressbar
   _dialog.py         # modal dialogs (_MsgDialog, _FileDialog) run on the app loop
+  _sysclip.py        # system clipboard (pbcopy, Win32, wl-copy, xclip/xsel, WSL, OSC 52)
+                     # for the STRING format of the per-type app._clipboard (_core.py);
+                     # used only with a real screen (_ownScreen), never by the fake-screen tests
   messagebox.py, filedialog.py, ttk.py   # tkinter-compatible modules
   font.py, colorchooser.py, dnd.py, simpledialog.py, constants.py
 tests/               # unittest suite; fakescreen.py = in-memory curses window

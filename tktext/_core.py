@@ -12,7 +12,7 @@
 
 import itertools as _itertools
 import curses
-from . import _colors
+from . import _colors, _sysclip
 from ._events import Event, KeyEvent, MouseEvent, B1_PRESS, B1_RELEASE, \
 	B1_CLICK, B1_DCLICK, B3_ANY, MOTION, isWheel, keysymOf, \
 	STATE_BUTTON1, STATE_SHIFT, STATE_CONTROL, STATE_ALT, mouseState
@@ -1157,22 +1157,45 @@ class Widget:
 		from ._image import image_types
 		return image_types()
 
-	# clipboard / selection (process local clipboard of the app)
+	# clipboard / selection (process local clipboard of the app), like Tk
+	# one buffer per type (format); STRING and UTF8_STRING are the same
+	@staticmethod
+	def _clipboardType(kw):
+		kind = kw.get('type') or 'STRING'
+		return 'STRING' if kind in ('UTF8_STRING', 'TEXT') else kind
+
 	def clipboard_get(self, **kw):
-		app = self._getApp()
-		if app is None or not app._clipboard:
-			raise TclError('CLIPBOARD selection doesn\'t exist or form "STRING" not defined')
-		return app._clipboard
+		app  = self._getApp()
+		data = app._clipboard if app is not None else {}
+		kind = self._clipboardType(kw)
+		if kind in ('STRING', 'TARGETS') and app is not None and app._ownScreen:
+			# another program copied: its text replaces our typed buffers
+			text = _sysclip.paste()
+			if text is not None and text != data.get('STRING', ''):
+				data.clear()
+				if text:
+					data['STRING'] = text
+		if kind == 'TARGETS' and data:
+			extra = ('UTF8_STRING',) if 'STRING' in data else ()
+			return ('TARGETS',) + tuple(data) + extra
+		if kind not in data:
+			raise TclError(f'CLIPBOARD selection doesn\'t exist or form "{kind}" not defined')
+		return data[kind]
 
 	def clipboard_clear(self, **kw):
 		app = self._getApp()
 		if app is not None:
-			app._clipboard = ''
+			app._clipboard.clear()
 
 	def clipboard_append(self, string, **kw):
 		app = self._getApp()
 		if app is not None:
-			app._clipboard += str(string)
+			kind = self._clipboardType(kw)
+			if isinstance(string, (bytes, bytearray)):
+				string = string.decode('latin-1')
+			app._clipboard[kind] = app._clipboard.get(kind, '') + str(string)
+			if kind == 'STRING' and app._ownScreen:
+				_sysclip.copy(app._clipboard[kind])
 
 	clipboardGet	= clipboard_get
 	clipboardClear	= clipboard_clear
@@ -1180,7 +1203,7 @@ class Widget:
 
 	def selection_get(self, **kw):
 		if kw.get('selection') == 'CLIPBOARD' or not hasattr(self, '_selectedText'):
-			return self.clipboard_get()
+			return self.clipboard_get(**kw)
 		text = self._selectedText()
 		if not text:
 			raise TclError('PRIMARY selection doesn\'t exist or form "STRING" not defined')
@@ -1574,7 +1597,11 @@ class Widget:
 		if not self._opts.get('image'):
 			return text
 		if not text:
-			# an icon: show its alt text (or a glyph) only if it can be
+			# an icon with its own glyph always shows it
+			glyph = self._imageGlyph()
+			if glyph:
+				return glyph
+			# otherwise its alt text (or a placeholder) only if it can be
 			# clicked; decorative icons stay blank
 			from ._image import IMAGE_GLYPH, _imageByName
 			if self._opts.get('command') or any(self._bindings.get(e) for e in

@@ -32,6 +32,8 @@ KEY_TAB		= 9
 KEY_BTAB	= 353	# Shift-Tab
 KEY_ESC		= 27
 KEY_SPACE	= 32
+KEY_CTRL_C	= 3	# raw tty: no SIGINT
+KEY_CTRL_Z	= 26	# raw tty: no SIGTSTP
 
 # Shift + movement keys (values are platform defaults; getattr guards portability)
 KEY_SHIFT_UP	= getattr(curses, 'KEY_SR',        337)

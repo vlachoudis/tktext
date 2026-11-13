@@ -96,7 +96,7 @@ to the default root.
 | `Menu`, `OptionMenu` | Popup, cascade and menubar menus |
 | `Canvas` | Items drawn on the character grid |
 | `PanedWindow` | Draggable sashes |
-| `PhotoImage`, `BitmapImage` | Size only; an icon-only button shows `image.alt` (or `▪`); `image.glyph` (default `▾▴◂▸` for `triangle_down`… names) is drawn beside the text with `compound=left/right` |
+| `PhotoImage`, `BitmapImage` | Size only; an icon-only widget shows `image.glyph` if set, else (when clickable) `image.alt` (or `▪`); `image.glyph` (default `▾▴◂▸` for `triangle_down`… names) is also drawn beside the text with `compound=left/right` |
 
 `tktext.ttk` provides the ttk versions (`ttk.Entry`, `ttk.Treeview`,
 `ttk.Notebook`, `ttk.Style` …).  Variables (`StringVar`, `IntVar`,
@@ -427,6 +427,7 @@ or light terminal, to `_BACKGROUND_THEMES['dark']` / `['light']`.
 |----------|--------|--------|
 | `TKTEXT_COLORS` | `terminal`, `tk` | Colour mode in drop-in mode (§5.1) |
 | `TKTEXT_BACKGROUND` | `auto`, `dark`, `light`, `#rrggbb` | Override terminal background detection (§5.2) |
+| `TKTEXT_CLIPBOARD` | `auto`, `macos`, `windows`, `wayland`, `xclip`, `xsel`, `wsl`, `osc52`, `none` | System clipboard backend (§8) |
 | `TERM` | e.g. `xterm-256color` | Number of colours and key/mouse support |
 | `COLORFGBG` | `fg;bg` | Fallback hint for the background colour |
 
@@ -441,6 +442,18 @@ or light terminal, to `_BACKGROUND_THEMES['dark']` / `['light']`.
   squeezed (borders are dropped before content).
 * Output written to stdout/stderr while the screen is active is captured and
   printed after the screen is restored.
+* The terminal runs in raw mode: Ctrl-C, Ctrl-Z, Ctrl-\\, Ctrl-S and Ctrl-Q are
+  keys (`<Control-c>` …), not signals or flow control.  Unbound, Ctrl-C closes
+  the active window (cancels a dialog or menu) and Ctrl-Z suspends the program.
+* Clipboard: `clipboard_append()` / `clipboard_get()` keep one buffer per
+  `type=` like Tk (`selection_get(type='TARGETS')` lists them).  The text format
+  (`STRING`) is also copied to the system clipboard and read back from it, so
+  text copied by another program replaces the other formats.  Backend, chosen
+  in this order (`TKTEXT_CLIPBOARD` forces one): macOS `pbcopy`/`pbpaste`,
+  Windows Win32 API, Wayland `wl-copy`/`wl-paste`, X11 `xclip` or `xsel`, WSL
+  `clip.exe`/`powershell.exe Get-Clipboard`, else the OSC 52 escape sequence
+  (copy only; wrapped for GNU screen; xterm needs `disallowedWindowOps`
+  without `SetSelection`, macOS Terminal.app ignores it).
 
 ---
 

@@ -12,6 +12,7 @@
 
 import os
 import sys
+import signal
 import time
 import atexit
 import curses
@@ -26,8 +27,8 @@ from ._frame import Frame
 from ._toplevel import Wm
 from . import _core
 from ._layout import doPackLayout, doGridLayout, doPlaceLayout
-from ._events import KEY_TAB, KEY_BTAB, KEY_ENTER, Event, MOTION, \
-	B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, B3_ANY, isWheel, \
+from ._events import KEY_TAB, KEY_BTAB, KEY_ENTER, KEY_CTRL_C, KEY_CTRL_Z, \
+	Event, MOTION, B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, B3_ANY, isWheel, \
 	decodeEscape, decodeExtended, isModified
 
 
@@ -75,7 +76,7 @@ class Tk(Wm, Frame):
 		self._menuBarActive	= -1
 		self._errors		= []	# formatted tracebacks of callback errors
 		self._reporting		= False
-		self._clipboard		= ''
+		self._clipboard		= {}	# type: data
 		self._allBindings	= Widget()	# bind_all() table
 		self._classBindings	= {}	# bind_class(): class name -> table
 		self._virtualEvents	= {}	# event_add(): <<virtual>> -> [sequences]
@@ -222,6 +223,7 @@ class Tk(Wm, Frame):
 			if scr is not None:
 				scr.keypad(False)
 			curses.echo()
+			curses.noraw()
 			curses.nocbreak()
 			curses.endwin()
 		except curses.error:
@@ -318,8 +320,11 @@ class Tk(Wm, Frame):
 		self._pressDelay	= 0.1 if initCurses else 0.0
 		if initCurses:
 			self._colors.init()
+			# raw instead of cbreak: Ctrl-C, Ctrl-Z, Ctrl-\\ (ISIG) and
+			# Ctrl-S / Ctrl-Q (IXON) reach the application as keys instead
+			# of signals / tty flow control (endwin() restores the tty)
 			try:
-				curses.cbreak()
+				curses.raw()
 				curses.noecho()
 			except curses.error:
 				pass
@@ -336,16 +341,6 @@ class Tk(Wm, Frame):
 			# xterm XTSHIFTESCAPE: report Shift-click to the application
 			# instead of using it for the terminal's own selection
 			_termWrite(_SHIFT_MOUSE_ON)
-			# let Ctrl-S / Ctrl-Q reach the application instead of the
-			# tty flow control (endwin() restores the saved tty modes)
-			try:
-				import termios
-				fd    = sys.stdin.fileno()
-				attrs = termios.tcgetattr(fd)
-				attrs[0] &= ~termios.IXON
-				termios.tcsetattr(fd, termios.TCSANOW, attrs)
-			except (ImportError, OSError, ValueError, AttributeError):
-				pass
 		scr.keypad(True)
 		scr.nodelay(False)
 		self._setCursor(0)
@@ -436,6 +431,22 @@ class Tk(Wm, Frame):
 			return 27
 		key = decodeEscape(seq)
 		return -1 if key is None else key
+
+	def _suspend(self):
+		"""Ctrl-Z without a binding: stop the process like the shell job
+		control would, and restore the screen when it is continued."""
+		if not self._ownScreen or not hasattr(signal, 'SIGTSTP'):
+			return
+		_termWrite(_SHIFT_MOUSE_OFF)
+		try:
+			curses.endwin()
+		except curses.error:
+			pass
+		os.kill(os.getpid(), signal.SIGTSTP)
+		# continued (SIGCONT): refresh() returns curses to program mode
+		_termWrite(_SHIFT_MOUSE_ON)
+		self._scr.refresh()
+		self._update(force=True)
 
 	def _onInterrupt(self):
 		"""Ctrl-C: dismiss dialogs, else 'close' the active window (calls
@@ -758,14 +769,14 @@ class Tk(Wm, Frame):
 		key = self._KEY_NORMALISE.get(key, key)
 		self._dirty = True
 
-		# Modal dialogs grab the keyboard
-		if self._postedDialogs:
-			self._postedDialogs[-1]._handleKey(key)
-			return
-
-		# Posted menus grab the keyboard
-		if self._postedMenus:
-			self._postedMenus[-1]._handleKey(key)
+		# Modal dialogs and posted menus grab the keyboard, Ctrl-C cancels
+		if self._postedDialogs or self._postedMenus:
+			if key == KEY_CTRL_C:
+				self._onInterrupt()
+			elif self._postedDialogs:
+				self._postedDialogs[-1]._handleKey(key)
+			else:
+				self._postedMenus[-1]._handleKey(key)
 			return
 
 		if self._menuBar is not None and key == curses.KEY_F10:
@@ -777,12 +788,13 @@ class Tk(Wm, Frame):
 		pat = evt.patterns()
 
 		# 1. bindings on the widget itself, then on its class
-		_, res = fw._dispatchFirst(pat, evt)
+		bound, res = fw._dispatchFirst(pat, evt)
 		if res == 'break':
 			return
 		res = self._dispatchClass(fw, pat, evt)
 		if res == 'break':
 			return
+		bound = bound or res is not None
 		if self._fireVirtualFor(fw, pat) == 'break':
 			return
 
@@ -799,17 +811,26 @@ class Tk(Wm, Frame):
 				matched, res = p._dispatchFirst(pat, evt)
 				if matched:
 					consumed = res == 'break'
+					bound    = True
 					break
 				p = p._parent
 
 		# 4. application wide bindings and focus traversal
 		if not consumed:
 			matched, res = self._allBindings._dispatchFirst(pat, evt)
+			bound = bound or matched
 			if res != 'break':
 				if key == KEY_TAB:
 					self._focusNext()
 				elif key == KEY_BTAB:
 					self._focusPrev()
+				# raw tty: unbound Ctrl-C / Ctrl-Z act like the signals
+				elif bound:
+					pass
+				elif key == KEY_CTRL_C:
+					self._onInterrupt()
+				elif key == KEY_CTRL_Z:
+					self._suspend()
 
 		# 5. key release (terminals have no real release events)
 		if not fw._destroyed:

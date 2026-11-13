@@ -676,6 +676,28 @@ class ImageAltTest(unittest.TestCase):
 		attach(root)
 		self.assertEqual(scr.text().count('newicon'), 1)
 
+	def test_icon_glyph(self):
+		_core.setPixelMode(8, 16)
+		try:
+			root, scr = makeApp(40, 8)
+			big       = tk.PhotoImage(width=32, height=32)
+			big.alt   = 'saveflair32'
+			big.glyph = '⤓'
+			small       = tk.PhotoImage(width=16, height=16)
+			small.alt   = 'TRC'
+			small.glyph = '△'
+			var = tk.IntVar(root)
+			tk.Button(root, image=big, command=lambda: None).pack()
+			tk.Checkbutton(root, image=small, variable=var, indicatoron=0).pack()
+			attach(root)
+			text = scr.text()
+			self.assertIn('⤓', text)
+			self.assertIn('△', text)
+			self.assertNotIn('saveflair32', text)
+			self.assertNotIn('TRC', text)
+		finally:
+			_core.setPixelMode(1, 1)
+
 
 class FocusCompatTest(unittest.TestCase):
 
@@ -726,3 +748,89 @@ class FocusCompatTest(unittest.TestCase):
 		dlg.destroy()
 		root._update(force=True)
 		self.assertIs(root.focus_get(), e)
+
+
+class ClipboardTest(unittest.TestCase):
+	"""One buffer per type like Tk (flair keeps text and pickled cards)."""
+
+	def test_typed_buffers(self):
+		root, scr = makeApp(40, 12)
+		root.clipboard_clear()
+		root.clipboard_append('CARD text')
+		root.clipboard_append(b'8c0a', type='application/x-card')
+		self.assertEqual(root.clipboard_get(), 'CARD text')
+		self.assertEqual(root.selection_get(selection='CLIPBOARD',
+			type='UTF8_STRING'), 'CARD text')
+		self.assertEqual(root.selection_get(selection='CLIPBOARD',
+			type='application/x-card'), '8c0a')
+		targets = root.selection_get(selection='CLIPBOARD', type='TARGETS')
+		self.assertIn('application/x-card', targets)
+		self.assertIn('STRING', targets)
+		root.clipboard_clear()
+		self.assertRaises(tk.TclError, root.clipboard_get)
+		self.assertRaises(tk.TclError, root.clipboard_get, type='TARGETS')
+
+
+class RawKeysTest(unittest.TestCase):
+	"""Raw tty: Ctrl-C / Ctrl-Z are keys; unbound Ctrl-C closes the window."""
+
+	def test_bound_and_unbound(self):
+		root, scr = makeApp(40, 12)
+		e = tk.Entry(root)
+		e.pack()
+		attach(root)
+		e.focus_set()
+		got = []
+		e.bind('<Control-c>', lambda ev: got.append('copy'))
+		e.bind('<Control-z>', lambda ev: got.append('undo'))
+		root._handleInput(3)
+		root._handleInput(26)
+		self.assertEqual(got, ['copy', 'undo'])
+		self.assertFalse(root._quit)
+		e.unbind('<Control-c>')
+		root._handleInput(3)
+		self.assertTrue(root._quit)
+
+
+class SystemClipboardTest(unittest.TestCase):
+	"""The STRING format follows the system clipboard (_sysclip)."""
+
+	def setUp(self):
+		from tktext import _sysclip
+		self.sysclip = _sysclip
+		self.saved   = (_sysclip.copy, _sysclip.paste)
+		self.system  = ['']
+		_sysclip.copy  = lambda text: self.system.__setitem__(0, text) or True
+		_sysclip.paste = lambda: self.system[0]
+		self.root, scr  = makeApp(40, 12)
+		self.root._ownScreen = True	# as if on a real terminal
+
+	def tearDown(self):
+		self.root._ownScreen = False
+		self.sysclip.copy, self.sysclip.paste = self.saved
+
+	def test_copy_reaches_system(self):
+		root = self.root
+		root.clipboard_clear()
+		root.clipboard_append('TITLE')
+		root.clipboard_append(b'8c0a', type='application/x-card')
+		self.assertEqual(self.system[0], 'TITLE')
+		# still our own text: the typed buffer is kept
+		self.assertIn('application/x-card',
+			root.selection_get(selection='CLIPBOARD', type='TARGETS'))
+
+	def test_foreign_text_replaces_buffers(self):
+		root = self.root
+		root.clipboard_clear()
+		root.clipboard_append('TITLE')
+		root.clipboard_append(b'8c0a', type='application/x-card')
+		self.system[0] = 'from outside'
+		targets = root.selection_get(selection='CLIPBOARD', type='TARGETS')
+		self.assertNotIn('application/x-card', targets)
+		self.assertEqual(root.clipboard_get(), 'from outside')
+
+	def test_osc52(self):
+		seq = self.sysclip.osc52('hi', term='xterm', screen=False)
+		self.assertEqual(seq, b'\x1b]52;c;aGk=\x07')
+		seq = self.sysclip.osc52('hi', term='screen-256color', screen=True)
+		self.assertEqual(seq, b'\x1bP\x1b]52;c;aGk=\x07\x1b\\')
