@@ -1,0 +1,12 @@
+*~
+*.pyo
+*.pyc
+**/__pycache__
+*.log
+.build_log
+.flake8
+.*.swp
+*.vim
+packages
+*.so
+*.bak
