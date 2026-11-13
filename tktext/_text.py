@@ -30,6 +30,14 @@ from ._events import (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT,
 # setting/unsetting it moves the anchor used by Shift-selection.
 ANCHOR_MARK = 'tk::anchor1'
 
+# Tk text tag options (reported by tag_configure(tag) like tkinter)
+_TAG_OPTIONS = ('background', 'bgstipple', 'borderwidth', 'elide',
+	'fgstipple', 'font', 'foreground', 'justify', 'lmargin1', 'lmargin2',
+	'lmargincolor', 'offset', 'overstrike', 'overstrikefg', 'relief',
+	'rmargin', 'rmargincolor', 'selectbackground', 'selectforeground',
+	'spacing1', 'spacing2', 'spacing3', 'tabs', 'tabstyle', 'underline',
+	'underlinefg', 'wrap')
+
 _SHIFT_MAP = {
 	KEY_SHIFT_UP:    KEY_UP,
 	KEY_SHIFT_DOWN:  KEY_DOWN,
@@ -779,11 +787,17 @@ class Text(_ScrollMixin, Widget):
 	def tagConfigure(self, name, cnf=None, **kwargs):
 		"""Configure appearance of tag *name* (foreground, background,
 		underline, font with 'bold'/'italic', reverse …)."""
+		self._ensureTag(name)
+		cfg = self._tagCfg[name]
+		if isinstance(cnf, str):	# tag_configure(tag, 'option')
+			opt = {'fg': 'foreground', 'bg': 'background'}.get(cnf, cnf)
+			return (opt, '', '', '', cfg.get(opt, ''))
 		if cnf:
 			kwargs.update(cnf)
-		self._ensureTag(name)
 		if not kwargs:
-			return dict(self._tagCfg[name])
+			# like tkinter: {option: (name, dbName, dbClass, default, value)}
+			return {opt: (opt, '', '', '', cfg.get(opt, ''))
+				for opt in sorted(set(_TAG_OPTIONS) | set(cfg))}
 		for k, v in kwargs.items():
 			k = {'fg': 'foreground', 'bg': 'background'}.get(k, k)
 			self._tagCfg[name][k] = v
@@ -1515,6 +1529,41 @@ class Text(_ScrollMixin, Widget):
 			fg, bg = sfg, sbg
 		return fg, bg, flags
 
+	def _cellStyle(self, r, c, styles, base):
+		"""Style (fg, bg, flags) of the character (or newline) at (r, c)."""
+		fg, bg, fl = base
+		for name, (tfg, tbg, tflags) in styles:
+			if self._tagCovers(name, (r, c)):
+				fg, bg, fl = tfg or fg, tbg or bg, fl | tflags
+		return (fg, bg, fl)
+
+	def _edgeStyle(self, seg, styles, base):
+		"""Style that fills the rest of the display line after *seg*
+		(*styles* = the tags with a background or reverse)
+		(like Tk: the newline's tags reach the right edge; a wrapped line
+		is filled when the tags continue on the next display line), or
+		None when the base background stays."""
+		if not styles:
+			return None
+		r, start, end = seg
+		if end >= len(self._buf[r]):
+			style = self._cellStyle(r, end, styles, base)
+		elif end > start:
+			style = self._cellStyle(r, end - 1, styles, base)
+			if style != self._cellStyle(r, end, styles, base):
+				return None
+		else:
+			return None
+		# only the background (and a reverse selection) is extended
+		style = (base[0], style[1], style[2] & curses.A_REVERSE)
+		return None if style == base else style
+
+	def _fillEdge(self, scr, i, bd, x0, n, style, cellAttr):
+		"""Paint *n* blank cells from display column x0 in *style*."""
+		if n > 0 and style is not None:
+			_addStr(scr, self._y + bd + i, self._x + bd + x0, ' ' * n,
+				cellAttr(style))
+
 	def render(self, scr):
 		if not self._isMapped():
 			return
@@ -1535,9 +1584,12 @@ class Text(_ScrollMixin, Widget):
 		segs   = self._displayLines(visW)
 		sx     = self._scrollX if self._wrapMode() == 'none' else 0
 		styles = [(n, self._tagStyle(n)) for n in self._tagOrder]
+		edge   = [it for it in styles
+				if it[1][1] or it[1][2] & curses.A_REVERSE]
 		emap   = self._elideMap()
 		app    = self._getApp()
 		mfn    = self._margins()
+		base   = (baseFg, baseBg, 0)
 		attrCache = {}
 
 		def cellAttr(style):
@@ -1561,7 +1613,7 @@ class Text(_ScrollMixin, Widget):
 			xs = self._segXs(r, start, end)
 			if xs is not None:
 				self._renderTabSeg(scr, i, bd, segs[si], xs, cs, avail,
-					styles, (baseFg, baseBg, 0), cellAttr, dx0)
+					styles, base, cellAttr, dx0, edge)
 				continue
 			if r in emap:
 				cols  = list(self._visibleCols(r, start, end))[cs:cs + avail]
@@ -1577,6 +1629,8 @@ class Text(_ScrollMixin, Widget):
 								fg, bg, fl = cells[j]
 								cells[j] = (tfg or fg, tbg or bg, fl | tflags)
 				self._drawCells(scr, i, bd, text, cells, cellAttr, dx0)
+				self._fillEdge(scr, i, bd, dx0 + len(text), avail - len(text),
+					self._edgeStyle(segs[si], edge, base), cellAttr)
 				continue
 			text  = self._buf[r][start:end][cs:cs + avail]
 			text  = text.replace('\t', ' ')
@@ -1601,18 +1655,16 @@ class Text(_ScrollMixin, Widget):
 					k += 1
 				_addStr(scr, y, x + j, text[j:k], cellAttr(cells[j]))
 				j = k
-			# selection covering the newline: show one highlighted cell
-			if len(text) < avail and end == len(self._buf[r]) and \
-					self._tagCovers('sel', (r, end)):
-				_addStr(scr, y, x + len(text), ' ',
-					cellAttr(self._tagStyle('sel')))
+			# tags covering the newline / the wrap reach the right edge
+			self._fillEdge(scr, i, bd, dx0 + len(text), avail - len(text),
+				self._edgeStyle(segs[si], edge, base), cellAttr)
 
 		if self._showInternalBar():
 			self._drawInternalBar(scr, self._x + self._width - bd - 1,
 				self._y + bd, visH, attr)
 
 	def _renderTabSeg(self, scr, i, bd, seg, xs, sx, visW, styles, base,
-			cellAttr, dx0=0):
+			cellAttr, dx0=0, edge=()):
 		"""Draw display segment seg containing tabs (xs = its layout)."""
 		r, start, end = seg
 		line  = self._buf[r]
@@ -1640,11 +1692,9 @@ class Text(_ScrollMixin, Widget):
 		text  = ''.join(chars)[sx:sx + visW]
 		cells = cells[sx:sx + visW]
 		self._drawCells(scr, i, bd, text, cells, cellAttr, dx0)
-		# selection covering the newline: show one highlighted cell
-		if hasNl and len(text) < visW and style[-1] != base and \
-				self._tagCovers('sel', (r, n)):
-			_addStr(scr, self._y + bd + i, self._x + bd + dx0 + len(text), ' ',
-				cellAttr(self._tagStyle('sel')))
+		# tags covering the newline / the wrap reach the right edge
+		self._fillEdge(scr, i, bd, dx0 + len(text), visW - len(text),
+			self._edgeStyle(seg, edge, base), cellAttr)
 
 	def _drawCells(self, scr, i, bd, text, cells, cellAttr, dx0=0):
 		y = self._y + bd + i

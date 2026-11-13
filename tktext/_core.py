@@ -10,10 +10,12 @@
 # Author: Vasilis.Vlachoudis@cern.ch
 # Date:   12-Nov-2026
 
+import itertools as _itertools
 import curses
 from . import _colors
 from ._events import Event, KeyEvent, MouseEvent, B1_PRESS, B1_RELEASE, \
-	B1_CLICK, B1_DCLICK, B3_ANY, MOTION, isWheel, keysymOf
+	B1_CLICK, B1_DCLICK, B3_ANY, MOTION, isWheel, keysymOf, \
+	STATE_BUTTON1, STATE_SHIFT, STATE_CONTROL, STATE_ALT, mouseState
 
 
 class TclError(ValueError):
@@ -1817,11 +1819,46 @@ class Widget:
 		pass
 
 
+# modifier prefixes of mouse bindings: Tk state bit → spellings
+_MOUSE_MOD_NAMES = (
+	(STATE_CONTROL,	('Control',)),
+	(STATE_ALT,	('Alt', 'Mod1')),
+	(STATE_SHIFT,	('Shift',)),
+)
+
+
+def _modifierPrefixes(state) -> list:
+	"""Return the 'Mod-…-' binding prefixes matching the modifier *state*,
+	most specific first: like Tk a binding may leave out modifiers that
+	are held (Shift-click fires <Button-1> when <Shift-1> is not bound),
+	but a binding asking for a modifier that is not held never matches."""
+	held = [(bit, names) for bit, names in _MOUSE_MOD_NAMES if state & bit]
+	result = []
+	for n in range(len(held), 0, -1):
+		for subset in _itertools.combinations(held, n):
+			for combo in _itertools.product(*(names for _, names in subset)):
+				for perm in _itertools.permutations(combo):
+					result.append('-'.join(perm) + '-')
+	return result
+
+
 def _mouseEventNames(bstate, dragging) -> list:
 	"""Return the binding names (in firing order) for a curses bstate.
 
-	Each entry is a list of alternatives, most specific first.
+	Each entry is a list of alternatives, most specific first; with
+	Shift/Control/Alt held the modified spellings (<Shift-Button-1>,
+	<Control-B1-Motion> …) come before the plain ones.
 	"""
+	names    = _mouseEventNamesPlain(bstate, dragging)
+	prefixes = _modifierPrefixes(mouseState(bstate))
+	if not prefixes:
+		return names
+	return [[f'<{p}{a[1:]}' for p in prefixes for a in alts] + alts
+		for alts in names]
+
+
+def _mouseEventNamesPlain(bstate, dragging) -> list:
+	"""_mouseEventNames() without the modifier prefixes."""
 	names = []
 	wheel = isWheel(bstate)
 	if wheel < 0:
@@ -1857,6 +1894,8 @@ def _newMouseEvent(widget, mx, my, bstate):
 	evt.y		= (my - widget._y) * PY
 	evt.x_root	= mx * PX
 	evt.y_root	= my * PY
+	if evt.type == 'Motion' and widget._dragging():
+		evt.state |= STATE_BUTTON1	# <B1-Motion>
 	return evt
 
 

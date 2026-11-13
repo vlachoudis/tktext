@@ -30,6 +30,22 @@ from ._events import KEY_TAB, KEY_BTAB, KEY_ENTER, Event, MOTION, \
 	decodeEscape, decodeExtended, isModified
 
 
+# xterm XTSHIFTESCAPE (CSI > Ps s): 1 = send Shift-click to the
+# application, 0 = Shift overrides mouse reporting (the default)
+_SHIFT_MOUSE_ON		= b'\x1b[>1s'
+_SHIFT_MOUSE_OFF	= b'\x1b[>0s'
+
+
+def _termWrite(data: bytes):
+	"""Write a control sequence straight to the terminal (fd 1;
+	sys.stdout is captured while curses owns the screen)."""
+	try:
+		if os.isatty(1):
+			os.write(1, data)
+	except OSError:
+		pass
+
+
 class Tk(Wm, Frame):
 	"""Root window.  Acts as the main frame and owns the event loop."""
 
@@ -188,6 +204,7 @@ class Tk(Wm, Frame):
 		self._running	= False
 		self._postedMenus.clear()
 		self._postedDialogs.clear()
+		_termWrite(_SHIFT_MOUSE_OFF)
 		try:
 			if scr is not None:
 				scr.keypad(False)
@@ -301,6 +318,9 @@ class Tk(Wm, Frame):
 					curses.REPORT_MOUSE_POSITION)
 			except curses.error:
 				pass
+			# xterm XTSHIFTESCAPE: report Shift-click to the application
+			# instead of using it for the terminal's own selection
+			_termWrite(_SHIFT_MOUSE_ON)
 			# let Ctrl-S / Ctrl-Q reach the application instead of the
 			# tty flow control (endwin() restores the saved tty modes)
 			try:
@@ -389,6 +409,8 @@ class Tk(Wm, Frame):
 				seq += chr(ch)
 				# final byte of the sequence
 				if len(seq) > 1 and 0x40 <= ch <= 0x7e:
+					break
+				if len(seq) > 2 and ch == ord('$'):	# rxvt Shift-<n>~
 					break
 		finally:
 			scr.timeout(self._nextTimeout())

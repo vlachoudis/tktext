@@ -41,11 +41,11 @@ _BRIGHT = {
 	'lightgray':	(7, 7),		'lightgrey':	(7, 7),
 	'brightblack':	(8, 7),
 	'brightred':	(9, 1),		'lightred':	(9, 1),
-	'brightgreen':	(10, 2),	'lightgreen':	(10, 2),
-	'brightyellow':	(11, 3),	'lightyellow':	(11, 3),
-	'brightblue':	(12, 4),	'lightblue':	(12, 4),
+	'brightgreen':	(10, 2),
+	'brightyellow':	(11, 3),
+	'brightblue':	(12, 4),
 	'brightmagenta':(13, 5),	'lightmagenta':	(13, 5),
-	'brightcyan':	(14, 6),	'lightcyan':	(14, 6),
+	'brightcyan':	(14, 6),
 	'brightwhite':	(15, 7),
 }
 
@@ -276,8 +276,13 @@ class ColorManager:
 			except (ValueError, IndexError):
 				return -1
 			limit = 16 if self._nColors >= 16 else 8
+			# a pale tint (LightYellow, Honeydew …) must stay visible on a
+			# white terminal: only (almost) pure white maps to bright white
+			noWhite = min(r, g, b) < 250
 			best, bestD = 0, float('inf')
 			for i, (br, bg, bb) in enumerate(_BASIC_RGB[:limit]):
+				if i == 15 and noWhite:
+					continue
 				d = (r - br)**2 + (g - bg)**2 + (b - bb)**2
 				if d < bestD:
 					bestD, best = d, i
@@ -285,15 +290,16 @@ class ColorManager:
 		if n in _BRIGHT:
 			bright, dull = _BRIGHT[n]
 			return bright if self._nColors >= 16 else dull
+		if n in _NAMES:
+			return _NAMES[n]
+		# X11 names (LightYellow is a pale tint, not ANSI bright yellow)
+		rgb = _x11(n)
+		if rgb is not None:
+			return self._resolve('#%02x%02x%02x' % rgb)
 		if n.startswith('light') and n[5:] in _NAMES:
 			base = _NAMES[n[5:]]
 			return base + 8 if self._nColors >= 16 else base
-		if n in _NAMES:
-			return _NAMES[n]
-		rgb = _x11(n)
-		if rgb is None:
-			return -1
-		return self._resolve('#%02x%02x%02x' % rgb)
+		return -1
 
 	@staticmethod
 	def toRGB(name):
