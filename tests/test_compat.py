@@ -688,7 +688,8 @@ class ImageAltTest(unittest.TestCase):
 			small.glyph = '△'
 			var = tk.IntVar(root)
 			tk.Button(root, image=big, command=lambda: None).pack()
-			tk.Checkbutton(root, image=small, variable=var, indicatoron=0).pack()
+			cb = tk.Checkbutton(root, image=small, variable=var, indicatoron=0)
+			cb.pack()
 			attach(root)
 			text = scr.text()
 			self.assertIsNotNone(scr.find('│ ⤓ │'))	# 32x32: a 5x2 box
@@ -698,6 +699,7 @@ class ImageAltTest(unittest.TestCase):
 			self.assertIn('△', text)
 			self.assertNotIn('saveflair32', text)
 			self.assertNotIn('TRC', text)
+			self.assertEqual(cb._width, 2)		# small glyph: two cells
 		finally:
 			_core.setPixelMode(1, 1)
 

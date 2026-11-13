@@ -1634,7 +1634,7 @@ class Widget:
 		return ' ' + text + ' '
 
 	def _iconBox(self, glyph: str) -> str:
-		"""A glyph alone for a small icon; a large one (> 24 px high in
+		"""A small icon is its glyph, padded to two cells; a large one (> 24 px high in
 		pixel mode, e.g. 32x32 ribbon buttons) becomes a box of its size
 		in cells (at least 5x2) with side lines and the glyph centred
 		on the first row:  '│ + │' / '│   │'."""
@@ -1647,7 +1647,9 @@ class Widget:
 		imgW = _int(getattr(img, 'width',  lambda: 0)())
 		imgH = _int(getattr(img, 'height', lambda: 0)())
 		if imgH <= 24:
-			return glyph
+			# two cells: easier to click and room for a glyph that the
+			# terminal font draws wide (ⓘ, ⚠ …)
+			return glyph if len(glyph) > 1 else glyph + ' '
 		inner = max(3, -(-imgW // PX) - 1, len(glyph) + 2)
 		if (inner - len(glyph)) % 2:
 			inner += 1		# keep the glyph centred

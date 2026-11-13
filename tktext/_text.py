@@ -1852,6 +1852,23 @@ class Text(_ScrollMixin, Widget):
 		style = (base[0], style[1], style[2] & curses.A_REVERSE)
 		return None if style == base else style
 
+	def _marginStyle(self, seg, styles, colors, base):
+		"""Style of the left margin of *seg*, like Tk: the lmargincolor,
+		else the background, of the tags on the first displayed character,
+		or None when the base background stays.  *colors* = [(name,
+		lmargincolor)] in reverse priority order"""
+		r, start, end = seg
+		c = next(iter(self._visibleCols(r, start, end)), end) \
+			if r in self._elideMap() else start
+		for name, color in colors:
+			if self._tagCovers(name, (r, c)):
+				return (base[0], color, 0)
+		if not styles:
+			return None
+		style = self._cellStyle(r, c, styles, base)
+		style = (base[0], style[1], style[2] & curses.A_REVERSE)
+		return None if style == base else style
+
 	def _fillEdge(self, scr, i, bd, x0, n, style, cellAttr):
 		"""Paint *n* blank cells from display column x0 in *style*."""
 		if n > 0 and style is not None:
@@ -1884,6 +1901,9 @@ class Text(_ScrollMixin, Widget):
 		emap   = self._elideMap()
 		app    = self._getApp()
 		mfn    = self._margins()
+		mcolor = [(n, self._tagCfg[n]['lmargincolor'])
+				for n in reversed(self._tagOrder)
+				if self._tagCfg.get(n, {}).get('lmargincolor')] if mfn else []
 		base   = (baseFg, baseBg, 0)
 		attrCache = {}
 
@@ -1905,6 +1925,9 @@ class Text(_ScrollMixin, Widget):
 			cs    = max(0, sx - m)
 			dx0   = max(0, m - sx)
 			avail = max(0, visW - dx0)
+			if dx0:
+				self._fillEdge(scr, i, bd, 0, dx0,
+					self._marginStyle(segs[si], edge, mcolor, base), cellAttr)
 			xs = self._segXs(r, start, end)
 			if xs is not None:
 				self._renderTabSeg(scr, i, bd, segs[si], xs, cs, avail,

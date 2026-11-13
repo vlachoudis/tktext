@@ -216,6 +216,28 @@ class TextRenderTest(unittest.TestCase):
 		self.assertEqual(self._yellowCols(scr, t, 1), list(range(20)))
 		self.assertEqual(self._yellowCols(scr, t, 2), [])
 
+	def test_tag_background_fills_left_margin(self):
+		# like Tk: the margin takes the background of the first character
+		root, scr, t = makeText('ab\ncd\nef')
+		self._markBackground(root)
+		t.tag_configure('ind', lmargin1=3)
+		t.tag_configure('hl', background='yellow')
+		t.tag_add('ind', '1.0', 'end')
+		t.tag_add('hl', '2.0', '3.0')
+		root._update(force=True)
+		self.assertEqual(self._yellowCols(scr, t, 0), [])
+		self.assertEqual(self._yellowCols(scr, t, 1), list(range(20)))
+		self.assertEqual(self._yellowCols(scr, t, 2), [])
+
+	def test_lmargincolor_fills_left_margin(self):
+		root, scr, t = makeText('ab\ncd')
+		self._markBackground(root)
+		t.tag_configure('ind', lmargin1=3, lmargincolor='yellow')
+		t.tag_add('ind', '2.0', 'end')
+		root._update(force=True)
+		self.assertEqual(self._yellowCols(scr, t, 0), [])
+		self.assertEqual(self._yellowCols(scr, t, 1), [0, 1, 2])
+
 	def test_selection_on_newline_fills_line(self):
 		root, scr, t = makeText('ab\ncd')
 		t.tag_add('sel', '1.0', '2.0')
