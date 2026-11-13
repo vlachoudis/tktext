@@ -1600,7 +1600,7 @@ class Widget:
 			# an icon with its own glyph always shows it
 			glyph = self._imageGlyph()
 			if glyph:
-				return glyph
+				return self._iconBox(glyph)
 			# otherwise its alt text (or a placeholder) only if it can be
 			# clicked; decorative icons stay blank
 			from ._image import IMAGE_GLYPH, _imageByName
@@ -1632,6 +1632,30 @@ class Widget:
 		if comp == 'right':
 			return text + ' '
 		return ' ' + text + ' '
+
+	def _iconBox(self, glyph: str) -> str:
+		"""A glyph alone for a small icon; a large one (> 24 px high in
+		pixel mode, e.g. 32x32 ribbon buttons) becomes a box of its size
+		in cells (at least 5x2) with side lines and the glyph centred
+		on the first row:  '│ + │' / '│   │'."""
+		if PX == 1:
+			return glyph
+		from ._image import _imageByName
+		img = _imageByName(self._opts.get('image'))
+		if img is None:
+			img = self._opts.get('image')
+		imgW = _int(getattr(img, 'width',  lambda: 0)())
+		imgH = _int(getattr(img, 'height', lambda: 0)())
+		if imgH <= 24:
+			return glyph
+		inner = max(3, -(-imgW // PX) - 1, len(glyph) + 2)
+		if (inner - len(glyph)) % 2:
+			inner += 1		# keep the glyph centred
+		rows  = max(2, -(-imgH // PY))
+		side  = (inner - len(glyph)) // 2
+		lines = [f'│{" "*side}{glyph}{" "*side}│']
+		lines.extend([f'│{" "*inner}│'] * (rows - 1))
+		return '\n'.join(lines)
 
 	def _imageGlyph(self) -> str:
 		"""The one-cell glyph of the image= option ('' if none)."""

@@ -691,7 +691,10 @@ class ImageAltTest(unittest.TestCase):
 			tk.Checkbutton(root, image=small, variable=var, indicatoron=0).pack()
 			attach(root)
 			text = scr.text()
-			self.assertIn('⤓', text)
+			self.assertIsNotNone(scr.find('│ ⤓ │'))	# 32x32: a 5x2 box
+			y, x = scr.find('│ ⤓ │')
+			self.assertIsNotNone(scr.find('│   │'))
+			self.assertEqual(scr.find('│   │'), (y + 1, x))
 			self.assertIn('△', text)
 			self.assertNotIn('saveflair32', text)
 			self.assertNotIn('TRC', text)

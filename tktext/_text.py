@@ -554,21 +554,31 @@ class Text(_ScrollMixin, Widget):
 		if pos == self._endPos():
 			pos = self._lastPos()		# never after the final newline
 		self._beginEdit()
-		args  = [chars] + list(tags)
-		exact = len(args) > 1	# like Tk: a tagList gives exactly those tags
-		for i in range(0, len(args), 2):
-			text  = str(args[i])
-			tagls = args[i + 1] if i + 1 < len(args) else ()
-			if isinstance(tagls, str):
-				tagls = tagls.split()
-			start  = pos
-			inside = self._tagsAround(pos) if exact else ()
-			pos    = self._rawInsert(pos, text)
+		if not tags:
+			self._rawInsert(pos, str(chars))
+		else:
+			# one buffer edit for all the segments, then their tags.
+			# Like Tk a tagList gives exactly those tags: the tags
+			# around pos are not extended over the inserted text
+			args   = [chars] + list(tags)
+			texts  = [str(t) for t in args[0::2]]
+			inside = self._tagsAround(pos)
+			end    = self._rawInsert(pos, ''.join(texts))
 			for t in inside:
-				if t not in tagls:
-					self._removeTagRange(t, start, pos)
-			for t in tagls:
-				self._addTagRange(t, start, pos)
+				self._removeTagRange(t, pos, end)
+			r, c = pos
+			for i, text in enumerate(texts):
+				tagls = args[2*i + 1] if 2*i + 1 < len(args) else ()
+				if isinstance(tagls, str):
+					tagls = tagls.split()
+				n = text.count('\n')
+				if n:
+					e = (r + n, len(text) - text.rfind('\n') - 1)
+				else:
+					e = (r, c + len(text))
+				for t in tagls:
+					self._addTagRange(t, (r, c), e)
+				r, c = e
 		self._lastEdit = None
 		# like Tk the view does not follow programmatic edits (scrolling
 		# here relaid the whole text out at every insert); keyboard
@@ -855,11 +865,17 @@ class Text(_ScrollMixin, Widget):
 
 	def _addTagRange(self, name, a, b):
 		self._ensureTag(name)
-		a = min(a, self._endPos())
-		b = min(b, self._endPos())
+		end = self._endPos()
+		a   = min(a, end)
+		b   = min(b, end)
 		if a >= b:
 			return
 		ranges = self._tagRanges[name]
+		# appending after the last range (filling the text in order)
+		if not ranges or ranges[-1][1] < a:
+			ranges.append((a, b))
+			self._rangesChanged(name)
+			return
 		# merge with every range overlapping or touching [a, b]
 		lo = bisect.bisect_left(ranges, a, key=_rangeEnd)
 		hi = bisect.bisect_right(ranges, b, key=_rangeStart)
@@ -1519,12 +1535,21 @@ class Text(_ScrollMixin, Widget):
 			self._xsCacheKey = (new,) + xkey[1:]
 			self._xsCache = {k: v for k, v in self._xsCache.items()
 				if k[0] != r}
-		emap = self._elideMap() if ekey else {}
-		mfn  = self._margins(mkey) if mkey else None
+		wkey = getattr(self, '_widthCacheKey', None)
+		if wkey is not None and wkey == (old, ekey, self._tabKey(), mkey):
+			self._widthCacheKey = (new,) + wkey[1:]
+			self._widthCache[r] = self._rowWidth(r,
+				self._margins(mkey) if mkey else None)
+		# computed only when a display line cache is patched: during a
+		# bulk insert there is none and the elide map is not rebuilt
+		emap = mfn = None
 		for key, segs in dlCache.items():
 			width, mode, ver, ek, tkey, mk = key
 			if ver != old or ek != ekey or mk != mkey:
 				continue
+			if emap is None:
+				emap = self._elideMap() if ekey else {}
+				mfn  = self._margins(mkey) if mkey else None
 			lo  = bisect.bisect_left(segs, r, key=_segRow)
 			hi  = bisect.bisect_right(segs, r, key=_segRow)
 			lst = []
@@ -1608,11 +1633,97 @@ class Text(_ScrollMixin, Widget):
 	def _indexForYview(self, idx):
 		return self._segIndex(self._parseIndex(idx))
 
+	def _rowMargins(self):
+		"""[margin of the first display line of every row], like
+		_margins()(r, 0), with one pass over the margin tag ranges.
+		None without margins"""
+		key = self._marginKey()
+		if key is None:
+			return None
+		n      = len(self._buf)
+		emap   = self._elideMap()
+		result = [None] * n
+		for name, m1, m2 in reversed(key[1]):	# highest priority first
+			if m1 in self._NO_ELIDE:
+				continue
+			try:
+				val = max(0, _core._cellsX(m1))
+			except (TclError, ValueError):
+				val = 0
+			for a, b in self._tagRanges.get(name, ()):
+				for r in range(a[0], min(b[0], n - 1) + 1):
+					if result[r] is not None:
+						continue
+					c = 0
+					for lo, hi in emap.get(r, ()):
+						if lo <= c < hi:
+							c = hi
+					if a <= (r, c) < b:
+						result[r] = val
+		return [m or 0 for m in result]
+
+	def _rowWidth(self, r, mfn, m=None):
+		"""Display width of the unwrapped row *r*; *m* its left margin
+		(else taken from *mfn*)."""
+		line = self._buf[r]
+		if m is None:
+			m = mfn(r, 0) if mfn else 0
+		if '\t' not in line:
+			return m + len(line)
+		stops, inc, wordproc = self._tabStops()
+		if wordproc:
+			return self._segWidth((r, 0, len(line)), mfn)
+		# the same x as _segXs without the per column list.
+		# Elided characters take no space
+		rng = self._elideMap().get(r)
+		if rng:
+			text = line[:rng[0][0]]
+			for i, (lo, hi) in enumerate(rng):
+				nxt   = rng[i + 1][0] if i + 1 < len(rng) else len(line)
+				text += line[hi:nxt]
+		else:
+			text = line
+		parts = text.split('\t')
+		x     = 0
+		for n in range(len(parts) - 1):
+			x += len(parts[n])
+			if not stops:
+				stop, align = (x // inc + 1) * inc, 'left'
+			elif n < len(stops):
+				stop, align = stops[n]
+			else:
+				stop, align = stops[-1]
+				stop += (n - len(stops) + 1) * inc
+			if align != 'left':
+				# aligned on the text up to the next tab
+				w = len(parts[n + 1])
+				if align == 'right':
+					stop -= w
+				elif align == 'center':
+					stop -= w // 2
+				else:
+					dot   = parts[n + 1].find('.')
+					stop -= w if dot < 0 else dot
+			x += max(1, stop - x)
+		return m + x + len(parts[-1])
+
+	def _contentWidth(self) -> int:
+		"""Width of the longest row.  The row widths are cached (and
+		patched on single row edits): a render must not lay out the
+		whole text"""
+		key = (self._version, self._elideKey(), self._tabKey(),
+			self._marginKey())
+		if getattr(self, '_widthCacheKey', None) != key:
+			mfn  = self._margins()
+			marg = self._rowMargins()
+			self._widthCache    = [self._rowWidth(r, mfn,
+							marg[r] if marg else 0)
+						for r in range(len(self._buf))]
+			self._widthCacheKey = key
+		return max(self._widthCache, default=0)
+
 	def xview(self, *args):
-		mfn    = self._margins()
-		maxLen = max((self._segWidth((r, 0, len(l)), mfn)
-			if '\t' in l or mfn else len(l)
-			for r, l in enumerate(self._buf)), default=0)
+		maxLen = self._contentWidth()
 		visW   = self._textW()
 		if not args:
 			if maxLen <= 0 or self._wrapMode() != 'none':

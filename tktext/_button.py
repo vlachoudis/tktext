@@ -107,7 +107,9 @@ class Button(Widget):
 		# no blank for the (invisible) compound image
 		text = self._plainText()
 		if not text:
-			return f'[{self._withImage(text)}]'
+			icon = self._withImage(text)
+			# a large icon box has its own side lines
+			return icon if '\n' in icon else f'[{icon}]'
 		glyph = self._imageGlyph() if self._opts.get('image') else ''
 		comp  = str(self._opts.get('compound') or 'none')
 		if glyph and comp in ('left', 'top'):

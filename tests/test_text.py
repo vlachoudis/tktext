@@ -399,6 +399,51 @@ class TextTabsTest(unittest.TestCase):
 		t.insert('end-1c', 'q')
 		self.assertEqual(len(t._displayLines()), 2)
 
+	def test_xview_follows_row_edits(self):
+		# the row widths are cached and patched on single row edits
+		root, scr, t = makeText('ab\tc\nxyz', wrap='none')	# widths 9, 3
+		root._update(force=True)
+		self.assertEqual(t.xview(), (0.0, 1.0))
+		t.insert('2.3', 'x' * 30)		# longest row: 33
+		self.assertEqual(t.xview(), (0.0, 20 / 33))
+		t.delete('2.3', '2.end')
+		self.assertEqual(t.xview(), (0.0, 1.0))
+		t.insert('1.0', '\t\t\t')		# 24 + 9
+		self.assertEqual(t.xview(), (0.0, 20 / 33))
+		t.tag_configure('h', elide=True)
+		t.tag_add('h', '1.0', '1.3')
+		self.assertEqual(t.xview(), (0.0, 1.0))
+
+	def test_row_width_matches_layout(self):
+		# _rowWidth computes the width without the per column layout
+		lines = ['x\tab\tcd\tef', '\t1.25\tq', 'abcdefghij\tk\tl\tm\tn',
+			'\t\t\t\t\t\t', 'no tabs', 'h1\th2\t3.5\t.\tc']
+		for tabs in (None, ('6', 'right', '7', 'left'),
+				('4', 'center', '9', 'numeric', '12'), ('3',)):
+			kw = {'tabs': tabs} if tabs else {}
+			root, scr, t = makeText('\n'.join(lines), wrap='none', **kw)
+			t.tag_configure('h', elide=True)
+			t.tag_add('h', '6.0', '6.3', '3.2', '3.5')
+			for r, l in enumerate(t._buf):
+				self.assertEqual(t._rowWidth(r, None),
+					t._segWidth((r, 0, len(l)), None), (tabs, l))
+
+	def test_row_margins_match_lookup(self):
+		root, scr, t = makeText('\n'.join(f'r{i}\tx' for i in range(8)),
+			wrap='none')
+		t.tag_configure('a', lmargin1=2)
+		t.tag_configure('b', lmargin1=5)	# higher priority
+		t.tag_configure('h', elide=True)
+		t.tag_add('a', '1.0', '6.0')
+		t.tag_add('b', '2.1', '4.0', '7.0', '7.2')
+		t.tag_add('h', '3.0', '3.1', '5.0', '5.2')
+		mfn = t._margins()
+		self.assertEqual(t._rowMargins(),
+			[mfn(r, 0) for r in range(len(t._buf))])
+		self.assertEqual(t._contentWidth(),
+			max(t._segWidth((r, 0, len(l)), mfn)
+				for r, l in enumerate(t._buf)))
+
 	def test_pixel_mode_stops(self):
 		from tktext import _core
 		_core.setPixelMode(8, 16)
@@ -506,6 +551,41 @@ class TextTagRangeTest(unittest.TestCase):
 		t.tk.call(t._w, 'insert', '1.0', 'id\n', 'x', 'body\n', '', 'more', 'y')
 		self.assertEqual(t.tag_ranges('x'), ('1.0', '2.0', '3.4', '5.0'))
 		self.assertEqual(t.tag_ranges('y'), ('3.0', '3.4'))
+
+	def test_insert_segments_with_newlines_and_tag_tuples(self):
+		root, scr, t = makeText('')
+		t.insert('1.0', 'a\nbc', ('x', 'y'), 'd', '', 'e\n\nfg', 'y')
+		self.assertEqual(t.get('1.0', 'end-1c'), 'a\nbcde\n\nfg')
+		self.assertEqual(t.tag_ranges('x'), ('1.0', '2.2'))
+		self.assertEqual(t.tag_ranges('y'), ('1.0', '2.2', '2.3', '4.2'))
+
+	def test_insert_segments_is_one_undo_step(self):
+		root, scr, t = makeText('', undo=True)
+		t.insert('1.0', 'base')
+		t.edit_separator()
+		t.insert('end', 'a', 'x', 'b\nc', 'y')
+		self.assertEqual(t.get('1.0', 'end-1c'), 'baseab\nc')
+		t.edit_undo()
+		self.assertEqual(t.get('1.0', 'end-1c'), 'base')
+
+	def test_append_elided_segments_is_linear(self):
+		# flair's CardWidget.create: one insert per card with an elided
+		# id line; the elide map was rebuilt for every segment
+		import time
+		root, scr, t = makeText()
+		t.tag_configure('id', elide=True)
+		start = time.time()
+		y = 1
+		for i in range(3000):
+			t.insert(f'{y}.0', f'{i}\n', 'id', ' CARD\t', 'card',
+				'\tname:\t', '', 'value\t', 'value', '\n\tx:\t', '',
+				'1.0\t', 'value', '\n', '')
+			y += 3
+		root.update()
+		self.assertLess(time.time() - start, 3.0)
+		self.assertEqual(len(t.tag_ranges('id')), 2 * 3000)
+		self.assertEqual(len(t.tag_ranges('value')), 2 * 2 * 3000)
+		self.assertEqual(t.tag_ranges('card')[:2], ('2.0', '2.6'))
 
 	def test_delete_merges_touching_ranges(self):
 		root, scr, t = makeText('aaXbb')
