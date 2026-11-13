@@ -10,6 +10,8 @@
 # Author: Vasilis.Vlachoudis@cern.ch
 # Date:   12-Nov-2026
 
+import time
+
 from ._core import Widget, _fillRect, _drawBorder, _drawText, _int, _initArgs, _callback
 from . import _core
 from ._events import KEY_ENTER, KEY_SPACE, B1_RELEASE, B1_CLICK, MOTION
@@ -39,6 +41,7 @@ class Button(Widget):
 			'image':		None,
 			'padx':			1 if _core.PX == 1 else 0,
 		})
+		self._btnPressed = False	# drawn pressed (flash before the command)
 		kwargs.setdefault('relief', 'raised')
 		kwargs.setdefault('borderwidth', 1)
 		if kwargs:
@@ -56,8 +59,36 @@ class Button(Widget):
 		return None
 
 	def flash(self):
-		"""Visual flash (no-op in terminal version)."""
-		pass
+		"""Flash the button a few times, like tkinter."""
+		if self._opts.get('state') == 'disabled':
+			return
+		for _ in range(2):
+			self._showPressed()
+
+	def _showPressed(self):
+		"""Draw the button pressed for a moment so that a click gives
+		visual feedback even when its command closes the window."""
+		app = self._getApp()
+		scr = app._scr if app is not None else None
+		if scr is None or not self._isMapped():
+			return
+		self._btnPressed = True
+		try:
+			self.render(scr)
+			scr.refresh()
+			delay = getattr(app, '_pressDelay', 0.0)
+			if delay > 0:
+				time.sleep(delay)
+		finally:
+			self._btnPressed = False
+		self.render(scr)
+		scr.refresh()
+
+	def _press(self):
+		"""User activation (click, Return, space): flash, then invoke."""
+		self._showPressed()
+		self.invoke()
+		self._markDirty()
 
 	# ------------------------------------------------------------------
 
@@ -70,15 +101,22 @@ class Button(Widget):
 			not self._cfgBorder()
 
 	def _getText(self):
-		text = self._rawText()
-		return f'[{text}]' if self._bracketed() else text
+		if not self._bracketed():
+			return self._rawText()
+		# the brackets already keep the text apart from its neighbours:
+		# no blank for the (invisible) compound image
+		text = self._plainText()
+		return f'[{text if text else self._withImage(text)}]'
 
-	def _rawText(self):
+	def _plainText(self) -> str:
 		tv = self._opts.get('textvariable')
 		if tv is not None and hasattr(tv, 'get'):
-			return self._withImage(str(tv.get()))
+			return str(tv.get())
 		text = self._opts.get('text')
-		return self._withImage('' if text is None else str(text))
+		return '' if text is None else str(text)
+
+	def _rawText(self):
+		return self._withImage(self._plainText())
 
 	def _preferredSize(self):
 		bd    = self._cfgBorder()
@@ -105,6 +143,10 @@ class Button(Widget):
 		# Choose colours
 		if state == 'disabled':
 			attr = self._disabledAttr()
+		elif self._btnPressed:
+			# the opposite of the current look, so that a focused
+			# (reversed) button flashes too
+			attr = self._getAttr() if self._focused else self._roleAttr('pressed')
 		elif self._focused:
 			attr = self._focusAttr()
 		else:
@@ -137,8 +179,7 @@ class Button(Widget):
 		if self._opts.get('state') == 'disabled':
 			return False
 		if key in (KEY_ENTER, KEY_SPACE):
-			self.invoke()
-			self._markDirty()
+			self._press()
 			return True
 		return False
 
@@ -149,7 +190,6 @@ class Button(Widget):
 		# over the widget that received the press.
 		if bstate & (B1_RELEASE | B1_CLICK) and not (bstate & MOTION):
 			if self._hitTest(mx, my):
-				self.invoke()
-				self._markDirty()
+				self._press()
 			return True
 		return False

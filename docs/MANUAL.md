@@ -292,6 +292,7 @@ is a tuple `(fg, bg, attrs)`:
 | `disabled` | text of disabled widgets | `('gray', '', '')` | |
 | `select` | selected text and items | `('', '', 'reverse')` | |
 | `focus` | focused button, active menu entry | `('', '', 'reverse')` | |
+| `pressed` | button shown pressed for 0.1 s when clicked (Return/space on a focused button shows it unfocused instead) | `('', '', 'reverse bold')` | |
 | `titlebar` | row 0: menubar | `('black', 'white', '')` | |
 | `titlebar.title` | row 0: window title | `('black', 'white', 'bold')` | |
 | `titlebar.disabled` | disabled menubar entry | `('gray', 'white', '')` | |

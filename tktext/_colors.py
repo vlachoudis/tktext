@@ -220,6 +220,7 @@ _DEFAULT_THEME = {
 	'disabled':		('gray', '', ''),		# disabled text
 	'select':		('', '', 'reverse'),		# selected text / items
 	'focus':		('', '', 'reverse'),		# focused button, menu entry
+	'pressed':		('', '', 'reverse bold'),	# button flashed on click
 	'titlebar':		('black', 'white', ''),		# row 0: menubar
 	'titlebar.title':	('black', 'white', 'bold'),	# row 0: window title
 	'titlebar.disabled':	('gray', 'white', ''),		# disabled menubar entry

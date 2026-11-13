@@ -314,6 +314,8 @@ class Tk(Wm, Frame):
 		self._scr		= scr
 		self._running		= True
 		self._pendingKeys	= []	# read ahead while decoding escapes
+		# how long a clicked Button stays pressed (no delay on a fake screen)
+		self._pressDelay	= 0.1 if initCurses else 0.0
 		if initCurses:
 			self._colors.init()
 			try:
