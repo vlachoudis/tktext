@@ -51,6 +51,8 @@ class Radiobutton(Checkbutton):
 	_isChecked = _isSelected
 
 	def _indicator(self) -> str:
+		if not self._showIndicator():
+			return ''
 		return '(*) ' if self._isSelected() else '( ) '
 
 	# ------------------------------------------------------------------

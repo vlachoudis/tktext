@@ -874,6 +874,8 @@ class Tk(Wm, Frame):
 			return
 
 		self._mouseXY = (mx, my)
+		if self._dragWidget is None and self._grabRedirect(mx, my, bstate, anyDown):
+			return
 		dragging = self._dragWidget is not None
 		if dragging and (press or clicked) and self._staleDrag(mx, my):
 			self._dragLost()
@@ -886,12 +888,6 @@ class Tk(Wm, Frame):
 		else:
 			win = self._windowAt(mx, my)
 			if win is None:
-				return
-			grab = self._grabWindow()
-			if grab is not None and not grab.winfo_toplevel()._isAncestorOf(win) \
-					and not win._override:
-				if anyDown:
-					self.bell()
 				return
 			target = win._findAt(mx, my) or win
 			self._trackHover(target, mx, my)
@@ -934,6 +930,37 @@ class Tk(Wm, Frame):
 
 		if release or clicked:
 			self._dragWidget = None
+
+	def _grabRedirect(self, mx, my, bstate, anyDown) -> bool:
+		"""Tk grab semantics: a mouse event outside the grab window's tree
+		is reported to the grab window itself (x/y relative to it, thus
+		out of its bounds) and never reaches the widget beneath.  A drop
+		down (tkExtra.Combobox) closes itself on such a click.  Returns
+		True when the event was consumed by the grab."""
+		grab = self._grabWindow()
+		if grab is None:
+			return False
+		win = self._windowAt(mx, my)
+		if win is not None:
+			target = win._findAt(mx, my) or win
+			if grab._isAncestorOf(target) or \
+					(win._override and not grab.winfo_toplevel()._override):
+				return False
+		if anyDown and not grab.winfo_toplevel()._override:
+			self.bell()		# a modal dialog refuses the click
+		evt = _newMouseEvent(grab, mx, my, bstate)
+		for alts in _mouseEventNames(bstate, False):
+			_, res = grab._dispatchFirst(alts, evt)
+			if res != 'break':
+				res = self._dispatchClass(grab, alts, evt)
+			if res != 'break' and not grab._destroyed:
+				top = grab.winfo_toplevel()
+				if top is not grab:
+					top._dispatchFirst(alts, evt)
+			self._allBindings._dispatchFirst(alts, evt)
+			if grab._destroyed:
+				break
+		return True
 
 	def _staleDrag(self, mx, my) -> bool:
 		"""A button press arrived while a drag is active: True when the

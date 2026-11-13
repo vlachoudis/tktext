@@ -73,6 +73,9 @@ def _rangeStart(rng):
 def _rangeEnd(rng):
 	return rng[1]
 
+def _segRow(seg):
+	return seg[0]
+
 def _isWordChar(ch) -> bool:
 	return ch.isalnum() or ch == '_'
 from ._core import _initArgs
@@ -142,6 +145,12 @@ class Text(_ScrollMixin, Widget):
 		# Display-line cache: (width, wrap, version) -> segments
 		self._dlCache	= {}
 		self._version	= 0
+		# bumped when a tag is created, configured, deleted, raised or
+		# lowered: caches the tags using elide / lmargin (_specialTags)
+		self._tagCfgVersion = 0
+		# bumped when the ranges of an elide / lmargin tag change
+		# without a text edit (tag_add, tag_remove …)
+		self._tagRangeVersion = 0
 
 		if kwargs:
 			Text.configure(self, **kwargs)
@@ -173,6 +182,7 @@ class Text(_ScrollMixin, Widget):
 		else:
 			a, b = sorted((self._clampPos(a, False), self._clampPos(b, False)))
 			self._tagRanges['sel'] = [(a, b)] if a < b else []
+		self._rangesChanged('sel')
 		self._markDirty()
 
 	def _endPos(self):
@@ -348,11 +358,20 @@ class Text(_ScrollMixin, Widget):
 		# pos are not affected (appending text costs nothing)
 		for ranges in self._tagRanges.values():
 			i = bisect.bisect_right(ranges, pos, key=_rangeEnd)
-			if i == len(ranges):
+			n = len(ranges)
+			if i == n:
 				continue
+			if nLines == 0:
+				# typing inside a line: only positions on row pr move,
+				# the ranges starting on a later row stay as they are
+				j = i
+				while j < n and ranges[j][0][0] <= pr:
+					j += 1
+			else:
+				j = n
 			# text inserted at the start or the end is untagged
-			ranges[i:] = [(adjust(a, True), adjust(b, False))
-					for a, b in ranges[i:]]
+			ranges[i:j] = [(adjust(a, True), adjust(b, False))
+					for a, b in ranges[i:j]]
 
 	def _adjustDelete(self, a, b):
 		ar, ac = a
@@ -376,8 +395,17 @@ class Text(_ScrollMixin, Widget):
 				continue
 			# start one before: ranges brought together are merged
 			i = max(0, i - 1)
+			n = len(ranges)
+			if ar == br:
+				# deleting inside a line: the ranges starting on a
+				# later row are not affected (nor merged)
+				j = i
+				while j < n and ranges[j][0][0] <= ar:
+					j += 1
+			else:
+				j = n
 			newRanges = []
-			for s, e in ranges[i:]:
+			for s, e in ranges[i:j]:
 				s, e = adjust(s), adjust(e)
 				if s >= e:
 					continue
@@ -385,7 +413,7 @@ class Text(_ScrollMixin, Widget):
 					newRanges[-1] = (newRanges[-1][0], e)
 				else:
 					newRanges.append((s, e))
-			ranges[i:] = newRanges
+			ranges[i:j] = newRanges
 
 	def _rawInsert(self, pos, text):
 		r, c   = pos
@@ -398,7 +426,7 @@ class Text(_ScrollMixin, Widget):
 		lastR  = r + len(lines) - 1
 		lastC  = len(self._buf[lastR])
 		self._buf[lastR] += tail
-		self._changed()
+		self._changed(r if lastR == r else None)
 		return (lastR, lastC)
 
 	def _rawDelete(self, a, b):
@@ -409,11 +437,18 @@ class Text(_ScrollMixin, Widget):
 		self._buf[ar:br + 1] = [self._buf[ar][:ac] + self._buf[br][bc:]]
 		if not self._buf:
 			self._buf = ['']
-		self._changed()
+		self._changed(ar if ar == br else None)
 
-	def _changed(self):
+	def _changed(self, row=None):
+		"""The text changed; *row* = the only row edited (no line was
+		added or removed): the cached display lines are then patched
+		instead of being recomputed for the whole text."""
+		old    = self._version
+		cache  = self._dlCache
 		self._version += 1
 		self._dlCache  = {}
+		if row is not None:
+			self._patchCaches(old, row, cache)
 		if not self._modified:
 			self._modified = True
 			self._fireVirtual('<<Modified>>')
@@ -783,6 +818,7 @@ class Text(_ScrollMixin, Widget):
 			self._tagRanges[name]	= []
 			# new tags get the highest priority below 'sel'
 			self._tagOrder.insert(len(self._tagOrder) - 1, name)
+			self._tagCfgVersion += 1
 
 	def tagConfigure(self, name, cnf=None, **kwargs):
 		"""Configure appearance of tag *name* (foreground, background,
@@ -801,6 +837,7 @@ class Text(_ScrollMixin, Widget):
 		for k, v in kwargs.items():
 			k = {'fg': 'foreground', 'bg': 'background'}.get(k, k)
 			self._tagCfg[name][k] = v
+		self._tagCfgVersion += 1
 		self._markDirty()
 		return None
 
@@ -822,6 +859,7 @@ class Text(_ScrollMixin, Widget):
 			a = min(a, ranges[lo][0])
 			b = max(b, ranges[hi - 1][1])
 		ranges[lo:hi] = [(a, b)]
+		self._rangesChanged(name)
 
 	def _rangesOnRow(self, name, r):
 		"""Tag ranges of *name* that touch text row *r*."""
@@ -877,18 +915,21 @@ class Text(_ScrollMixin, Widget):
 			if e > b:
 				out.append((b, e))
 		ranges[lo:hi] = out
+		self._rangesChanged(name)
 		self._markDirty()
 
 	def tagDelete(self, *names):
 		for n in names:
 			if n == 'sel':
 				self._tagRanges['sel'] = []
+				self._rangesChanged('sel')
 				continue
 			self._tagCfg.pop(n, None)
 			self._tagRanges.pop(n, None)
 			self._tagBinds.pop(n, None)
 			if n in self._tagOrder:
 				self._tagOrder.remove(n)
+		self._tagCfgVersion += 1
 		self._markDirty()
 
 	def tagRanges(self, name):
@@ -931,6 +972,7 @@ class Text(_ScrollMixin, Widget):
 			self._tagOrder.insert(self._tagOrder.index(aboveThis) + 1, name)
 		else:
 			self._tagOrder.insert(len(self._tagOrder) - 1, name)
+		self._tagCfgVersion += 1
 		self._markDirty()
 
 	def tagLower(self, name, belowThis=None):
@@ -941,6 +983,7 @@ class Text(_ScrollMixin, Widget):
 			self._tagOrder.insert(self._tagOrder.index(belowThis), name)
 		else:
 			self._tagOrder.insert(0, name)
+		self._tagCfgVersion += 1
 		self._markDirty()
 
 	def tagBind(self, name, sequence, func, add=None):
@@ -1011,12 +1054,60 @@ class Text(_ScrollMixin, Widget):
 
 	_NO_ELIDE = (None, '', 0, False, '0', 'false', 'no')
 
+	def _specialTags(self):
+		"""([elide tag names], [(name, lmargin1, lmargin2)]) in priority
+		order.  Cached: with many tags (one per line or card) scanning
+		them all on every keystroke dominates the editing time."""
+		if getattr(self, '_specialKey', None) == self._tagCfgVersion:
+			return self._specialCache
+		elide   = []
+		margins = []
+		for n in self._tagOrder:
+			cfg = self._tagCfg.get(n)
+			if not cfg:
+				continue
+			if cfg.get('elide') not in self._NO_ELIDE:
+				elide.append(n)
+			m1 = cfg.get('lmargin1')
+			m2 = cfg.get('lmargin2')
+			if m1 not in self._NO_ELIDE or m2 not in self._NO_ELIDE:
+				margins.append((n, m1, m2))
+		special = set(elide) | {n for n, _, _ in margins}
+		self._specialKey   = self._tagCfgVersion
+		self._specialCache = (elide, margins, special)
+		return self._specialCache
+
+	def _rangesChanged(self, name):
+		"""The ranges of tag *name* changed without a text edit."""
+		if name in self._specialTags()[2]:
+			self._tagRangeVersion += 1
+
 	def _elideKey(self):
-		names = [n for n in self._tagOrder
-			if self._tagCfg.get(n, {}).get('elide') not in self._NO_ELIDE]
+		names = self._specialTags()[0]
 		if not names:
 			return None
-		return tuple((n, tuple(self._tagRanges.get(n, ()))) for n in names)
+		return (tuple(names), self._tagRangeVersion)
+
+	def _elideRow(self, r, names):
+		"""Merged elided column ranges [(lo, hi), …] of row *r*."""
+		lst  = []
+		line = len(self._buf[r])
+		for n in names:
+			for a, b in self._rangesOnRow(n, r):
+				lo = a[1] if a[0] == r else 0
+				hi = b[1] if b[0] == r else line + 1
+				if hi > lo:
+					lst.append((lo, hi))
+		if not lst:
+			return lst
+		lst.sort()
+		merged = [lst[0]]
+		for lo, hi in lst[1:]:
+			if lo <= merged[-1][1]:
+				merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+			else:
+				merged.append((lo, hi))
+		return merged
 
 	def _elideMap(self):
 		"""{row: [(lo, hi), …]} merged elided column ranges; column
@@ -1028,8 +1119,8 @@ class Text(_ScrollMixin, Widget):
 			return self._elideCache
 		rows = {}
 		nbuf = len(self._buf)
-		for _, ranges in key:
-			for a, b in ranges:
+		for n in key[0]:
+			for a, b in self._tagRanges.get(n, ()):
 				for r in range(a[0], min(b[0], nbuf - 1) + 1):
 					lo = a[1] if r == a[0] else 0
 					hi = b[1] if r == b[0] else len(self._buf[r]) + 1
@@ -1093,17 +1184,10 @@ class Text(_ScrollMixin, Widget):
 	_MARGIN_OPTS = ('lmargin1', 'lmargin2')
 
 	def _marginKey(self):
-		key = []
-		for n in self._tagOrder:
-			cfg = self._tagCfg.get(n, {})
-			m1  = cfg.get('lmargin1')
-			m2  = cfg.get('lmargin2')
-			if m1 in self._NO_ELIDE and m2 in self._NO_ELIDE:
-				continue
-			key.append((n, m1, m2, tuple(self._tagRanges.get(n, ()))))
-		if not key:
+		specs = self._specialTags()[1]
+		if not specs:
 			return None
-		return (_core.PX, tuple(key))
+		return (_core.PX, tuple(specs), self._tagRangeVersion)
 
 	def _margins(self, key=None):
 		"""Return a function (row, start) -> left margin in cells of the
@@ -1127,10 +1211,11 @@ class Text(_ScrollMixin, Widget):
 			return c
 
 		def lookup(p, opt):
-			for name, m1, m2, ranges in reversed(tags):
+			for name, m1, m2 in reversed(tags):
 				val = m1 if opt == 0 else m2
 				if val in self._NO_ELIDE:
 					continue
+				ranges = self._tagRanges.get(name, ())
 				i = bisect.bisect_right(ranges, (p, (1 << 60, 0))) - 1
 				if i >= 0 and ranges[i][0] <= p < ranges[i][1]:
 					try:
@@ -1353,29 +1438,79 @@ class Text(_ScrollMixin, Widget):
 		for r, line in enumerate(self._buf):
 			if emap and self._rowHidden(r, emap):
 				continue
-			if '\t' in line:
-				self._wrapTabRow(r, width, mode, segs, mfn)
+			if mode == 'none' and '\t' not in line:
+				segs.append((r, 0, len(line)))	# fast path
 				continue
-			if mode == 'none' or \
-			   len(line) + (mfn(r, 0) if mfn else 0) <= width:
-				segs.append((r, 0, len(line)))
-				continue
-			s = 0
-			while s < len(line):
-				e = s + max(1, width - (mfn(r, s) if mfn else 0))
-				if e >= len(line):
-					segs.append((r, s, len(line)))
-					break
-				if mode == 'word':
-					brk = line.rfind(' ', s, e + 1)
-					if brk > s:
-						e = brk + 1
-				segs.append((r, s, e))
-				s = e
+			self._rowSegs(r, width, mode, segs, mfn)
 		if len(self._dlCache) > 8:
 			self._dlCache.clear()
 		self._dlCache[key] = segs
 		return segs
+
+	def _rowSegs(self, r, width, mode, segs, mfn=None):
+		"""Append the display segments of text row *r* to *segs*."""
+		line = self._buf[r]
+		if '\t' in line:
+			self._wrapTabRow(r, width, mode, segs, mfn)
+			return
+		if mode == 'none' or \
+		   len(line) + (mfn(r, 0) if mfn else 0) <= width:
+			segs.append((r, 0, len(line)))
+			return
+		s = 0
+		while s < len(line):
+			e = s + max(1, width - (mfn(r, s) if mfn else 0))
+			if e >= len(line):
+				segs.append((r, s, len(line)))
+				return
+			if mode == 'word':
+				brk = line.rfind(' ', s, e + 1)
+				if brk > s:
+					e = brk + 1
+			segs.append((r, s, e))
+			s = e
+
+	def _patchCaches(self, old, r, dlCache):
+		"""Only row *r* was edited (no line added or removed) since
+		version *old*: update the entries of row r of the layout caches
+		(elide map, margins, tab layout, display lines) and keep the
+		rest, instead of recomputing them over the whole text on every
+		keystroke."""
+		new  = self._version
+		ekey = self._elideKey()
+		mkey = self._marginKey()
+		if ekey is not None and \
+		   getattr(self, '_elideCacheKey', None) == (old, ekey):
+			rows = self._elideCache
+			lst  = self._elideRow(r, ekey[0])
+			if lst:
+				rows[r] = lst
+			else:
+				rows.pop(r, None)
+			self._elideCacheKey = (new, ekey)
+		if mkey is not None and getattr(self, '_marginCacheKey', None) \
+				== (old, mkey, ekey):
+			self._marginCacheKey = (new, mkey, ekey)
+			self._marginCache = {k: v for k, v in
+				self._marginCache.items() if k[0] != r}
+		xkey = getattr(self, '_xsCacheKey', None)
+		if xkey is not None and xkey[0] == old and xkey[1] == ekey:
+			self._xsCacheKey = (new,) + xkey[1:]
+			self._xsCache = {k: v for k, v in self._xsCache.items()
+				if k[0] != r}
+		emap = self._elideMap() if ekey else {}
+		mfn  = self._margins(mkey) if mkey else None
+		for key, segs in dlCache.items():
+			width, mode, ver, ek, tkey, mk = key
+			if ver != old or ek != ekey or mk != mkey:
+				continue
+			lo  = bisect.bisect_left(segs, r, key=_segRow)
+			hi  = bisect.bisect_right(segs, r, key=_segRow)
+			lst = []
+			if not (emap and self._rowHidden(r, emap)):
+				self._rowSegs(r, width, mode, lst, mfn)
+			segs[lo:hi] = lst
+			self._dlCache[(width, mode, new, ek, tkey, mk)] = segs
 
 	def _totalRows(self) -> int:
 		return len(self._displayLines())
@@ -1529,6 +1664,32 @@ class Text(_ScrollMixin, Widget):
 			fg, bg = sfg, sbg
 		return fg, bg, flags
 
+	_NO_STYLE = ('', '', 0)
+
+	def _visibleStyles(self, segs, visH):
+		"""[(name, style)] in priority order of the tags that change the
+		look of the text and have a range on the displayed rows.  Done
+		once per render: testing every tag on every row is too slow
+		with thousands of tags (one per line or card)."""
+		if not segs:
+			return []
+		first = min(self._scrollY, len(segs) - 1)
+		last  = min(self._scrollY + visH, len(segs)) - 1
+		r0    = segs[first][0]
+		r1    = segs[max(first, last)][0]
+		result = []
+		for n in self._tagOrder:
+			ranges = self._tagRanges.get(n)
+			if not ranges:
+				continue
+			i = bisect.bisect_left(ranges, (r0, 0), key=_rangeEnd)
+			if i >= len(ranges) or ranges[i][0][0] > r1:
+				continue
+			style = self._tagStyle(n)
+			if style != self._NO_STYLE:
+				result.append((n, style))
+		return result
+
 	def _cellStyle(self, r, c, styles, base):
 		"""Style (fg, bg, flags) of the character (or newline) at (r, c)."""
 		fg, bg, fl = base
@@ -1583,7 +1744,7 @@ class Text(_ScrollMixin, Widget):
 		visW   = self._textW()
 		segs   = self._displayLines(visW)
 		sx     = self._scrollX if self._wrapMode() == 'none' else 0
-		styles = [(n, self._tagStyle(n)) for n in self._tagOrder]
+		styles = self._visibleStyles(segs, visH)
 		edge   = [it for it in styles
 				if it[1][1] or it[1][2] & curses.A_REVERSE]
 		emap   = self._elideMap()

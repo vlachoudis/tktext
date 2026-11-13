@@ -11,6 +11,7 @@
 # Date:   12-Nov-2026
 
 from ._core import Widget, _addStr, _fillRect, _drawBorder, _pad, _sameValue, _int, _initArgs
+from ._layout import _truthy
 from ._events import KEY_ENTER, KEY_SPACE, B1_RELEASE, B1_CLICK, MOTION
 
 
@@ -120,7 +121,12 @@ class Checkbutton(Widget):
 			return self._withImage(str(tv.get()))
 		return self._withImage(str(self._opts.get('text') or ''))
 
+	def _showIndicator(self) -> bool:
+		return _truthy(self._opts.get('indicatoron', True))
+
 	def _indicator(self) -> str:
+		if not self._showIndicator():
+			return ''
 		return '[X] ' if self._isChecked() else '[ ] '
 
 	def _preferredSize(self):
@@ -128,9 +134,9 @@ class Checkbutton(Widget):
 		padx  = _int(self._opts.get('padx'))
 		lines = self._getText().expandtabs(8).split('\n')
 		textW = max(len(l) for l in lines)
-		w     = max(_int(self._opts.get('width')), 4 + textW) + 2*bd + 2*padx
+		w     = max(_int(self._opts.get('width')), len(self._indicator()) + textW) + 2*bd + 2*padx
 		h     = len(lines) + 2*bd
-		return (max(w, 3), max(h, 1))
+		return (max(w, 1), max(h, 1))
 
 	# ------------------------------------------------------------------
 	# Rendering
@@ -151,6 +157,10 @@ class Checkbutton(Widget):
 			afg = self._opts.get('activeforeground') or ''
 			abg = self._opts.get('activebackground') or ''
 			attr = self._getAttr(fg=afg, bg=abg, reverse=not (afg or abg))
+		elif not self._showIndicator() and self._isChecked():
+			# indicatoron=False: a selected button is shown pressed
+			sc   = self._opts.get('selectcolor') or ''
+			attr = self._getAttr(bg=sc) if sc else self._getAttr(reverse=True)
 		else:
 			attr = self._getAttr()
 
@@ -161,10 +171,11 @@ class Checkbutton(Widget):
 
 		cw    = max(0, self._width - 2*bd - 2*padx)
 		lines = self._getText().expandtabs(8).split('\n')
+		ind   = self._indicator()
 		for i, line in enumerate(lines):
 			if i >= self._height - 2*bd:
 				break
-			pfx = self._indicator() if i == 0 else '    '
+			pfx = ind if i == 0 else ' ' * len(ind)
 			_addStr(scr, self._y + bd + i, self._x + bd + padx,
 				_pad(pfx + line, cw, 'left'), attr)
 
