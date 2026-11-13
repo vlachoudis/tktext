@@ -165,7 +165,8 @@ class Checkbutton(Widget):
 		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 
 		if bd > 0 and relief != 'flat':
-			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief,
+				self._borderAttr(attr))
 
 		cw    = max(0, self._width - 2*bd - 2*padx)
 		lines = self._getText().expandtabs(8).split('\n')

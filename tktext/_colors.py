@@ -226,10 +226,11 @@ _DEFAULT_THEME = {
 	'titlebar.disabled':	('gray', 'white', ''),		# disabled menubar entry
 	'menubar.active':	('white', 'black', 'bold'),	# open menubar entry
 	'frame.active':		('cyan', '', 'bold'),		# border of the active dialog window
+	'border':		('#808080', '', ''),		# widget borders, LabelFrame lines
 	'dialog':		('white', 'blue', ''),		# messagebox / file dialog body
 	'dialog.title':		('yellow', 'blue', 'bold'),
 	'dialog.field':		('black', 'white', ''),		# simpledialog entry
-	'entry':		('', '#3a3a3a', ''),		# Entry, Spinbox, Combobox field
+	'entry':		('#ffffff', '#3a3a3a', ''),		# Entry, Spinbox, Combobox field
 	'dialog.select':	('black', 'cyan', ''),		# selected file
 	'dialog.focus':		('black', 'white', 'bold'),	# focused button / field
 	'dialog.dir':		('cyan', 'blue', 'bold'),	# directory names
@@ -248,7 +249,8 @@ _BACKGROUND_THEMES = {
 	},
 	'light': {
 		'frame.active':		('blue', '', 'bold'),
-		'entry':		('', '#e4e4e4', ''),
+		'entry':		('#000000', '#e4e4e4', ''),
+		'border':		('#a8a8a8', '', ''),
 	},
 }
 

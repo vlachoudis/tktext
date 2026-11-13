@@ -17,6 +17,11 @@ Widgets accept ``image=`` and ``compound=`` like tkinter.  A clickable
 image-only widget shows the image's ``alt`` text (or a glyph): programs
 may set ``image.alt = 'save'`` (a plain attribute, harmless for tkinter),
 an image loaded with file= defaults to its file name.
+
+An image may also carry a one-cell ``glyph`` (``image.glyph = '▾'``) drawn
+next to the text when ``compound=`` puts the image beside it, e.g. the
+dropdown triangle of a menu button.  Images named like a known arrow or
+triangle (``triangle_down``, ``arrow_up`` …) get their glyph by default.
 """
 import os
 import struct
@@ -26,6 +31,18 @@ from ._core import TclError
 
 _images		= {}	# name -> Image
 _imageCount	= 0
+
+# Default glyph of images named after an arrow/triangle shape
+_NAMED_GLYPHS	= {
+	'triangle_down':	'▾',
+	'triangle_up':		'▴',
+	'triangle_left':	'◂',
+	'triangle_right':	'▸',
+	'arrow_down':		'↓',
+	'arrow_up':		'↑',
+	'arrow_left':		'←',
+	'arrow_right':		'→',
+}
 
 
 def _imageByName(name):
@@ -71,6 +88,7 @@ class Image:
 		self._opts	= {}
 		self._size	= (0, 0)
 		self.alt	= ''		# text shown in place of the image
+		self.glyph	= ''		# one cell shown next to the text (compound)
 		self.configure(**{**cnf, **kw})
 		_images[self.name] = self
 
@@ -81,9 +99,19 @@ class Image:
 		if _images.get(getattr(self, 'name', None)) is self:
 			del _images[self.name]
 
+	def __setattr__(self, key, value):
+		super().__setattr__(key, value)
+		# a known shape name also gives the image its glyph
+		if key == 'alt' and not getattr(self, 'glyph', ''):
+			glyph = _NAMED_GLYPHS.get(str(value).lower())
+			if glyph:
+				super().__setattr__('glyph', glyph)
+
 	def configure(self, **kw):
 		if 'alt' in kw:
 			self.alt = str(kw.pop('alt') or '')
+		if 'glyph' in kw:
+			self.glyph = str(kw.pop('glyph') or '')
 		if kw.get('file') and not self.alt:
 			self.alt = os.path.splitext(os.path.basename(str(kw['file'])))[0]
 		self._opts.update(kw)
@@ -140,7 +168,8 @@ class PhotoImage(Image):
 
 	def _derived(self, w, h):
 		img = PhotoImage(width=max(0, int(w)), height=max(0, int(h)))
-		img.alt = self.alt
+		img.alt   = self.alt
+		img.glyph = self.glyph
 		return img
 
 	def blank(self):

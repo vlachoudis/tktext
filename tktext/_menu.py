@@ -693,7 +693,8 @@ class OptionMenu(Widget):
 
 		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 		if bd > 0:
-			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief,
+				self._borderAttr(attr))
 
 		cw    = max(1, self._width - 2*bd)
 		label = _pad(self._getCurrentLabel(), max(0, cw - 2)) + ' ▼'

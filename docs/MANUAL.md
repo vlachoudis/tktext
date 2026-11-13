@@ -96,7 +96,7 @@ to the default root.
 | `Menu`, `OptionMenu` | Popup, cascade and menubar menus |
 | `Canvas` | Items drawn on the character grid |
 | `PanedWindow` | Draggable sashes |
-| `PhotoImage`, `BitmapImage` | Size only; shown as a glyph |
+| `PhotoImage`, `BitmapImage` | Size only; an icon-only button shows `image.alt` (or `▪`); `image.glyph` (default `▾▴◂▸` for `triangle_down`… names) is drawn beside the text with `compound=left/right` |
 
 `tktext.ttk` provides the ttk versions (`ttk.Entry`, `ttk.Treeview`,
 `ttk.Notebook`, `ttk.Style` …).  Variables (`StringVar`, `IntVar`,
@@ -286,7 +286,7 @@ is a tuple `(fg, bg, attrs)`:
 
 | Role | Used for | Default (dark terminal) | Light terminal |
 |------|----------|-------------------------|----------------|
-| `entry` | Entry, Spinbox, Combobox field | `('', '#3a3a3a', '')` | `('', '#e4e4e4', '')` |
+| `entry` | Entry, Spinbox, Combobox field (bright white text on a dark terminal, black on a light one) | `('#ffffff', '#3a3a3a', '')` | `('#000000', '#e4e4e4', '')` |
 | `tk.window` | drop-in mode widget default | `('black', '#d9d9d9', '')` | |
 | `tk.field` | drop-in mode Text, Listbox, Treeview … field (and Entry with `colors='tk'`) | `('black', 'white', '')` | |
 | `disabled` | text of disabled widgets | `('gray', '', '')` | |
@@ -298,6 +298,7 @@ is a tuple `(fg, bg, attrs)`:
 | `titlebar.disabled` | disabled menubar entry | `('gray', 'white', '')` | |
 | `menubar.active` | open menubar entry | `('white', 'black', 'bold')` | |
 | `frame.active` | border of the active dialog window | `('cyan', '', 'bold')` | `('blue', '', 'bold')` |
+| `border` | widget borders and LabelFrame lines (normal state; focused, selected or disabled borders take that state's colours) | `('#808080', '', '')` | `('#a8a8a8', '', '')` |
 | `dialog` | messagebox / file dialog body | `('white', 'blue', '')` | |
 | `dialog.title` | dialog title | `('yellow', 'blue', 'bold')` | |
 | `dialog.field` | simpledialog input field | `('black', 'white', '')` | |

@@ -86,7 +86,8 @@ class Label(Widget):
 
 		relief = self._opts.get('relief', 'flat')
 		if bd > 0 and relief != 'flat':
-			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief,
+				self._borderAttr(attr))
 
 		_drawText(scr,
 			self._x + bd + padx, self._y + bd + pady,

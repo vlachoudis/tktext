@@ -170,7 +170,8 @@ class Frame(Widget):
 		# Border
 		relief = self._opts.get('relief', 'flat')
 		if bd > 0 and relief != 'flat':
-			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief,
+				self._borderAttr(attr))
 
 		text = str(self._opts.get('text') or '')
 		if text and self._width > 4:

@@ -1591,14 +1591,28 @@ class Widget:
 				alt = getattr(img, 'alt', '')
 				return f' {alt} ' if alt else IMAGE_GLYPH
 			return ' '
+		comp = str(self._opts.get('compound') or 'none')
+		glyph = self._imageGlyph()
+		if glyph:
+			if comp in ('left', 'top'):
+				return f'{glyph} {text}'
+			if comp in ('right', 'bottom'):
+				return f'{text} {glyph}'
 		if PX == 1:
 			return text
-		comp = str(self._opts.get('compound') or 'none')
 		if comp == 'left':
 			return ' ' + text
 		if comp == 'right':
 			return text + ' '
 		return ' ' + text + ' '
+
+	def _imageGlyph(self) -> str:
+		"""The one-cell glyph of the image= option ('' if none)."""
+		from ._image import _imageByName
+		img = _imageByName(self._opts.get('image'))
+		if img is None:
+			img = self._opts.get('image')
+		return str(getattr(img, 'glyph', '') or '')
 
 	def _labelledByNeighbour(self) -> bool:
 		"""An icon followed (same grid row, next column, or the next
@@ -1765,6 +1779,14 @@ class Widget:
 		if app is None:
 			return 0
 		return app._colors.roleAttr(role, self._color('fg'), self._color('bg'), **kw)
+
+	def _borderAttr(self, attr):
+		"""Attribute of the border around content drawn with *attr*: the
+		'border' role on the widget's background when *attr* is the
+		normal one; focused, selected, disabled … borders keep *attr*."""
+		if attr != self._getAttr():
+			return attr
+		return self._roleAttr('border')
 
 	def _disabledAttr(self, **kw):
 		"""Disabled text: disabledforeground or the 'disabled' role."""

@@ -610,7 +610,8 @@ class Treeview(_ScrollMixin, Widget):
 
 		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 		if bd > 0 and relief != 'flat':
-			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief,
+				self._borderAttr(attr))
 
 		innerX  = self._x + bd
 		innerW  = self._innerW()

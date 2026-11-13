@@ -106,7 +106,15 @@ class Button(Widget):
 		# the brackets already keep the text apart from its neighbours:
 		# no blank for the (invisible) compound image
 		text = self._plainText()
-		return f'[{text if text else self._withImage(text)}]'
+		if not text:
+			return f'[{self._withImage(text)}]'
+		glyph = self._imageGlyph() if self._opts.get('image') else ''
+		comp  = str(self._opts.get('compound') or 'none')
+		if glyph and comp in ('left', 'top'):
+			return f'[{glyph} {text}]'
+		if glyph and comp in ('right', 'bottom'):
+			return f'[{text} {glyph}]'
+		return f'[{text}]'
 
 	def _plainText(self) -> str:
 		tv = self._opts.get('textvariable')
@@ -156,7 +164,8 @@ class Button(Widget):
 
 		relief = self._opts.get('relief', 'raised')
 		if bd > 0 and relief != 'flat':
-			_drawBorder(scr, self._y, self._x, self._height, self._width, relief, attr)
+			_drawBorder(scr, self._y, self._x, self._height, self._width, relief,
+				self._borderAttr(attr))
 
 		# Shrink padding first when the button is squeezed
 		innerW = self._width - 2*bd
