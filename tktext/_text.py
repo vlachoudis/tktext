@@ -554,14 +554,19 @@ class Text(_ScrollMixin, Widget):
 		if pos == self._endPos():
 			pos = self._lastPos()		# never after the final newline
 		self._beginEdit()
-		args = [chars] + list(tags)
+		args  = [chars] + list(tags)
+		exact = len(args) > 1	# like Tk: a tagList gives exactly those tags
 		for i in range(0, len(args), 2):
 			text  = str(args[i])
 			tagls = args[i + 1] if i + 1 < len(args) else ()
 			if isinstance(tagls, str):
 				tagls = tagls.split()
-			start = pos
-			pos   = self._rawInsert(pos, text)
+			start  = pos
+			inside = self._tagsAround(pos) if exact else ()
+			pos    = self._rawInsert(pos, text)
+			for t in inside:
+				if t not in tagls:
+					self._removeTagRange(t, start, pos)
 			for t in tagls:
 				self._addTagRange(t, start, pos)
 		self._lastEdit = None
@@ -907,6 +912,10 @@ class Text(_ScrollMixin, Widget):
 			self._movePos(a, 1)
 		if a >= b:		# like Tk: nothing to remove
 			return
+		self._removeTagRange(name, a, b)
+		self._markDirty()
+
+	def _removeTagRange(self, name, a, b):
 		ranges = self._tagRanges[name]
 		# only the ranges overlapping [a, b) change
 		lo  = bisect.bisect_right(ranges, a, key=_rangeEnd)
@@ -919,7 +928,16 @@ class Text(_ScrollMixin, Widget):
 				out.append((b, e))
 		ranges[lo:hi] = out
 		self._rangesChanged(name)
-		self._markDirty()
+
+	def _tagsAround(self, pos):
+		"""Tags with a range strictly containing *pos*: the text inserted
+		there extends them."""
+		result = []
+		for name, ranges in self._tagRanges.items():
+			i = bisect.bisect_right(ranges, pos, key=_rangeEnd)
+			if i < len(ranges) and ranges[i][0] < pos:
+				result.append(name)
+		return result
 
 	def tagDelete(self, *names):
 		for n in names:
