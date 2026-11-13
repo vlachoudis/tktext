@@ -100,6 +100,9 @@ class Button(Widget):
 			self._opts.get('relief', 'raised') not in ('flat', 'groove') and \
 			not self._cfgBorder()
 
+	def _iconFramed(self) -> bool:
+		return self._bracketed() or super()._iconFramed()
+
 	def _getText(self):
 		if not self._bracketed():
 			return self._rawText()

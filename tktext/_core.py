@@ -1648,8 +1648,11 @@ class Widget:
 		imgH = _int(getattr(img, 'height', lambda: 0)())
 		if imgH <= 24:
 			# two cells: easier to click and room for a glyph that the
-			# terminal font draws wide (ⓘ, ⚠ …)
-			return glyph if len(glyph) > 1 else glyph + ' '
+			# terminal font draws wide (ⓘ, ⚠ …), unless a border or
+			# brackets already frame it
+			if len(glyph) > 1 or self._iconFramed():
+				return glyph
+			return glyph + ' '
 		inner = max(3, -(-imgW // PX) - 1, len(glyph) + 2)
 		if (inner - len(glyph)) % 2:
 			inner += 1		# keep the glyph centred
@@ -1658,6 +1661,11 @@ class Widget:
 		lines = [f'│{" "*side}{glyph}{" "*side}│']
 		lines.extend([f'│{" "*inner}│'] * (rows - 1))
 		return '\n'.join(lines)
+
+	def _iconFramed(self) -> bool:
+		"""The content is drawn inside a visible border."""
+		return self._cfgBorder() > 0 and \
+			self._opts.get('relief', 'flat') != 'flat'
 
 	def _imageGlyph(self) -> str:
 		"""The one-cell glyph of the image= option ('' if none)."""

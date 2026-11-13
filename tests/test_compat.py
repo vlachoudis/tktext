@@ -703,6 +703,20 @@ class ImageAltTest(unittest.TestCase):
 		finally:
 			_core.setPixelMode(1, 1)
 
+	def test_framed_icon_glyph_is_not_padded(self):
+		_core.setPixelMode(8, 16)
+		try:
+			root, scr = makeApp(40, 8)
+			img       = tk.PhotoImage(width=16, height=16)
+			img.glyph = '+'
+			tk.Button(root, image=img, command=lambda: None).pack()
+			tk.Label(root, image=img, relief='single', borderwidth=1).pack()
+			attach(root)
+			self.assertIsNotNone(scr.find('[+]'))	# brackets frame it
+			self.assertIsNotNone(scr.find('│+│'))	# a drawn border
+		finally:
+			_core.setPixelMode(1, 1)
+
 
 class FocusCompatTest(unittest.TestCase):
 
