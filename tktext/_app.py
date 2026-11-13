@@ -19,6 +19,7 @@ import shutil
 import traceback
 
 from ._colors import ColorManager
+from . import _colors, _termbg
 from ._core import Widget, _fillRect, _addStr, _pad, _mouseEventNames, \
 	_newMouseEvent, _newKeyEvent
 from ._frame import Frame
@@ -180,6 +181,7 @@ class Tk(Wm, Frame):
 		uncaught exception is printed."""
 		if self._scr is not None:
 			return
+		self._adaptTheme()		# asks the terminal: before initscr()
 		scr = curses.initscr()
 		self._ownScreen = True
 		self._captureOutput()
@@ -194,6 +196,17 @@ class Tk(Wm, Frame):
 		except BaseException:
 			self._stopScreen()
 			raise
+
+	@staticmethod
+	def _adaptTheme():
+		"""Adapt the theme roles to the background the widgets are drawn
+		on: Tk's light gray in pixel mode with 'tk' colours, otherwise the
+		terminal's own background."""
+		if _core.PX != 1 and _colors.colorMode() == 'tk':
+			kind = 'light'
+		else:
+			kind = 'dark' if _termbg.isDarkTerminal() else 'light'
+		_colors.setBackground(kind)
 
 	def _stopScreen(self):
 		if not self._ownScreen:
@@ -1199,7 +1212,7 @@ class Tk(Wm, Frame):
 		owner = owner if owner is not None else self
 		if owner is not self._barOwner():
 			return
-		barAttr = self._colors.getAttr('black', 'white')
+		barAttr = self._colors.roleAttr('titlebar')
 		_addStr(scr, 0, 0, ' ' * self._width, barAttr)
 		title  = f' {owner._title} '
 		startX = 0
@@ -1211,9 +1224,9 @@ class Tk(Wm, Frame):
 				label = f' {item.get("label", "")} '
 				a     = barAttr
 				if item.get('state', 'normal') == 'disabled':
-					a = self._colors.getAttr('gray', 'white')
+					a = self._colors.roleAttr('titlebar.disabled')
 				elif idx == self._menuBarActive and self._postedMenus:
-					a = self._colors.getAttr('white', 'black', bold=True)
+					a = self._colors.roleAttr('menubar.active')
 				_addStr(scr, 0, x0, label, a)
 				startX = x1
 			titleX = max(startX + 1, self._width - len(title))
@@ -1221,7 +1234,7 @@ class Tk(Wm, Frame):
 			titleX = max(0, (self._width - len(title)) // 2)
 		if titleX < self._width:
 			_addStr(scr, 0, titleX, _pad(title, min(len(title), self._width - titleX)),
-				self._colors.getAttr('black', 'white', bold=True))
+				self._colors.roleAttr('titlebar.title'))
 		if not self._postedMenus:
 			self._menuBarActive = -1
 

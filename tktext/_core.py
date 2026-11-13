@@ -1668,35 +1668,125 @@ class Widget:
 		b = bg if bg else self._color('bg')
 		return app._colors.getAttr(f, b, **kw)
 
-	# Tk default colours (pixel mode) per class: (background, foreground)
-	_TK_COLORS = {
-		'Entry':	('white', 'black'),
-		'Text':		('white', 'black'),
-		'Listbox':	('white', 'black'),
-		'Spinbox':	('white', 'black'),
-		'Combobox':	('white', 'black'),
-		'Treeview':	('white', 'black'),
+	# pixel mode: classes drawn with the 'tk.field' theme role (white
+	# fields), the others use 'tk.window'
+	# theme role of the default field colours ('entry' for Entry and its
+	# subclasses); used natively and in pixel mode with terminal colours
+	_fieldRole = None
+
+	_FIELD_CLASSES = frozenset(('Entry', 'Text', 'Listbox', 'Spinbox',
+		'Combobox', 'Treeview'))
+
+	# Tk option database names of the colour options
+	_DB_NAMES = {
+		'selectbackground':	'selectBackground',
+		'selectforeground':	'selectForeground',
+		'activebackground':	'activeBackground',
+		'activeforeground':	'activeForeground',
+		'disabledforeground':	'disabledForeground',
+		'readonlybackground':	'readonlyBackground',
+		'insertbackground':	'insertBackground',
+		'highlightcolor':	'highlightColor',
+		'troughcolor':		'troughColor',
+		'selectcolor':		'selectColor',
 	}
-	_TK_BG	= '#d9d9d9'
-	_TK_FG	= 'black'
+
+	# classes of composite widgets (a Frame created with class_=…) whose
+	# Label/Entry children are drawn as fields, e.g. a combobox built as
+	# Frame(class_='Combobox') + Label + arrow button
+	_FIELD_CONTAINERS = frozenset(('Combobox',))
+
+	def _activeFieldRole(self):
+		"""The field theme role used for the default colours, or None."""
+		if not (PX == 1 or _colors.colorMode() == 'terminal'):
+			return None
+		role = self._fieldRole
+		if role is None and self.winfo_class() in ('Label', 'Entry'):
+			parent = self._parent
+			if parent is not None and \
+			   parent.winfo_class() in self._FIELD_CONTAINERS:
+				role = 'entry'
+		return role
+
+	def _dbColor(self, app, key):
+		return app._optionLookup(self.winfo_class(), self._name,
+			'background' if key == 'bg' else 'foreground')
 
 	def _color(self, key):
 		"""Resolve colour option *key* ('fg' or 'bg'): explicit option,
-		then the option database, then (pixel mode) the Tk default."""
+		then the option database, then (pixel mode) the theme.  For a
+		field, a palette default colour in the database (e.g. Tk's white
+		'*Entry.background') gives way to the field role, otherwise the
+		terminal colour mode would erase the field."""
 		value = self._opts.get(key)
 		if value:
 			return value
 		app = self._getApp()
 		if app is None:
 			return ''
-		value = app._optionLookup(self.winfo_class(), self._name,
-			'background' if key == 'bg' else 'foreground')
+		value = self._dbColor(app, key)
+		role  = self._activeFieldRole()
+		if role:
+			# the role applies when the background is a default one;
+			# the foreground follows the background
+			if self._opts.get('bg'):
+				useRole = False
+			else:
+				bg      = value if key == 'bg' else self._dbColor(app, 'bg')
+				useRole = not bg or _colors.isDefaultColor(bg)
+			if useRole and key == 'fg' and value:
+				useRole = _colors.isDefaultColor(value, True)
+			if useRole:
+				fg, bg, _ = _colors.getTheme(role)
+				return bg if key == 'bg' else fg
 		if value:
 			return value
 		if PX == 1:
 			return ''
-		bg, fg = self._TK_COLORS.get(self.winfo_class(), (self._TK_BG, self._TK_FG))
+		role = 'tk.field' if self.winfo_class() in self._FIELD_CLASSES else 'tk.window'
+		fg, bg, _ = _colors.getTheme(role)
 		return bg if key == 'bg' else fg
+
+	def _optColor(self, option):
+		"""Colour option *option* ('selectbackground' …): the widget's
+		option, else the option database ('*selectBackground'), else ''."""
+		value = self._opts.get(option)
+		if value:
+			return value
+		app = self._getApp()
+		if app is None:
+			return ''
+		return app._optionLookup(self.winfo_class(), self._name,
+			self._DB_NAMES.get(option, option)) or ''
+
+	def _roleAttr(self, role, **kw):
+		"""Attribute of theme *role*, inheriting the widget's colours."""
+		app = self._getApp()
+		if app is None:
+			return 0
+		return app._colors.roleAttr(role, self._color('fg'), self._color('bg'), **kw)
+
+	def _disabledAttr(self, **kw):
+		"""Disabled text: disabledforeground or the 'disabled' role."""
+		dfg = self._optColor('disabledforeground')
+		if dfg:
+			return self._getAttr(fg=dfg, **kw)
+		return self._roleAttr('disabled', **kw)
+
+	def _pairAttr(self, fgOpt, bgOpt, role, **kw):
+		fg = self._optColor(fgOpt)
+		bg = self._optColor(bgOpt)
+		if fg or bg:
+			return self._getAttr(fg=fg, bg=bg, **kw)
+		return self._roleAttr(role, **kw)
+
+	def _selectAttr(self, **kw):
+		"""Selected text: select{fore,back}ground or the 'select' role."""
+		return self._pairAttr('selectforeground', 'selectbackground', 'select', **kw)
+
+	def _focusAttr(self, **kw):
+		"""Active/focused element: active{fore,back}ground or the 'focus' role."""
+		return self._pairAttr('activeforeground', 'activebackground', 'focus', **kw)
 
 	def _isFocusable(self):
 		tf = self._opts.get('takefocus', True)

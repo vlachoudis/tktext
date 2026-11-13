@@ -409,7 +409,7 @@ class Listbox(_ScrollMixin, Widget):
 		relief = self._opts.get('relief', 'sunken')
 		disabled = self._opts.get('state') == 'disabled'
 		if disabled:
-			attr = self._getAttr(fg='gray')
+			attr = self._disabledAttr()
 
 		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 		if bd > 0 and relief != 'flat':
@@ -421,8 +421,7 @@ class Listbox(_ScrollMixin, Widget):
 		bx      = self._x + bd
 		by      = self._y + bd
 
-		sfg = self._opts.get('selectforeground') or ''
-		sbg = self._opts.get('selectbackground') or ''
+		selA = self._selectAttr()
 		for i in range(visH):
 			itemIdx = self._scrollY + i
 			if itemIdx >= len(self._lbItems):
@@ -433,7 +432,7 @@ class Listbox(_ScrollMixin, Widget):
 
 			cfg = self._itemCfg.get(itemIdx)
 			if isSelected:
-				rowAttr = self._getAttr(fg=sfg, bg=sbg, reverse=not (sfg or sbg))
+				rowAttr = selA
 			elif cfg and (cfg.get('fg') or cfg.get('bg')):
 				rowAttr = self._getAttr(fg=cfg.get('fg'), bg=cfg.get('bg'))
 			else:

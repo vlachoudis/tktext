@@ -10,7 +10,6 @@
 # Author: Vasilis.Vlachoudis@cern.ch
 # Date:   12-Nov-2026
 
-import curses
 from ._entry import Entry
 from ._core import _addStr, _int, _initArgs
 from ._events import (KEY_UP, KEY_DOWN, KEY_PPAGE, KEY_NPAGE,
@@ -151,7 +150,7 @@ class Spinbox(Entry):
 		bd    = self._border()
 		attr  = self._getAttr()
 		by    = self._y + bd + (self._height - 2*bd - 1) // 2
-		battr = attr | (curses.A_REVERSE if self._focused else 0)
+		battr = self._focusAttr() if self._focused else attr
 		_addStr(scr, by, self._buttonX(), self._BUTTONS, battr)
 
 	# ------------------------------------------------------------------

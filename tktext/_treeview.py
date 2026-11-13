@@ -647,7 +647,7 @@ class Treeview(_ScrollMixin, Widget):
 			iid, depth = flat[flatIdx]
 			node = self._treeItems.get(iid, {})
 			if iid in self._sel:
-				rowAttr = attr | curses.A_REVERSE
+				rowAttr = self._selectAttr()
 			else:
 				rowAttr = self._getItemAttr(iid)
 			if iid == self._focusIid and self._focused:

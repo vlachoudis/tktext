@@ -88,8 +88,9 @@ class Scrollbar(Widget):
 		n      = self._length()
 		if _core.PX != 1:
 			# Tk look: grey trough, darker slider
-			tattr = self._getAttr(bg=self._opts.get('troughcolor') or '#c3c3c3')
-			sattr = self._getAttr(bg='#8c8c8c')
+			trough = self._optColor('troughcolor')
+			tattr  = self._getAttr(bg=trough) if trough else self._roleAttr('scrollbar.trough')
+			sattr  = self._roleAttr('scrollbar.slider')
 			ts, te = self._thumb() if n >= 3 else (0, 0)
 			cells = []
 			for i in range(n):

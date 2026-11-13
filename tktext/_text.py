@@ -16,7 +16,7 @@ import curses
 
 from ._core import TclError, Widget, _addStr, _fillRect, _drawBorder, _int, \
 	_newMouseEvent, _mouseEventNames, _cellX, _cellY, _pxBox
-from . import _core
+from . import _core, _colors
 from ._listbox import _ScrollMixin
 from ._events import (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT,
 	KEY_HOME, KEY_END, KEY_PPAGE, KEY_NPAGE, KEY_BACKSPACE, KEY_DC, KEY_ENTER,
@@ -1657,10 +1657,11 @@ class Text(_ScrollMixin, Widget):
 		if cfg.get('reverse'):
 			flags |= curses.A_REVERSE
 		if name == 'sel':
-			sfg = self._opts.get('selectforeground') or fg
-			sbg = self._opts.get('selectbackground') or bg
+			sfg = self._optColor('selectforeground') or fg
+			sbg = self._optColor('selectbackground') or bg
 			if not (sfg or sbg):
-				flags |= curses.A_REVERSE
+				sfg, sbg, _ = _colors.getTheme('select')
+				flags |= _colors.roleCursesFlags('select')
 			fg, bg = sfg, sbg
 		return fg, bg, flags
 

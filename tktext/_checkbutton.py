@@ -45,7 +45,7 @@ class Checkbutton(Widget):
 			'indicatoron':		True,
 			'activeforeground':	'',
 			'activebackground':	'',
-			'disabledforeground':	'gray',
+			'disabledforeground':	'',
 			'selectcolor':		'',
 		})
 		kwargs.setdefault('relief', 'flat')
@@ -152,15 +152,13 @@ class Checkbutton(Widget):
 		relief  = self._opts.get('relief', 'flat')
 
 		if state == 'disabled':
-			attr = self._getAttr(fg=self._opts.get('disabledforeground') or 'gray')
+			attr = self._disabledAttr()
 		elif self._focused:
-			afg = self._opts.get('activeforeground') or ''
-			abg = self._opts.get('activebackground') or ''
-			attr = self._getAttr(fg=afg, bg=abg, reverse=not (afg or abg))
+			attr = self._focusAttr()
 		elif not self._showIndicator() and self._isChecked():
 			# indicatoron=False: a selected button is shown pressed
-			sc   = self._opts.get('selectcolor') or ''
-			attr = self._getAttr(bg=sc) if sc else self._getAttr(reverse=True)
+			sc   = self._optColor('selectcolor')
+			attr = self._getAttr(bg=sc) if sc else self._roleAttr('select')
 		else:
 			attr = self._getAttr()
 

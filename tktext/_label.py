@@ -71,7 +71,7 @@ class Label(Widget):
 
 	def _contentAttr(self):
 		if self._opts.get('state') == 'disabled':
-			return self._getAttr(fg=self._opts.get('disabledforeground') or 'gray')
+			return self._disabledAttr()
 		return self._getAttr()
 
 	def render(self, scr):

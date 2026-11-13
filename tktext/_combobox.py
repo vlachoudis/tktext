@@ -150,7 +150,7 @@ class Combobox(Entry):
 		vals = self._values()
 		ddX, ddY, ddW, ddH = self._ddRect()
 		lattr = self._getAttr()
-		sattr = lattr | curses.A_REVERSE
+		sattr = self._selectAttr()
 		_fillRect(scr, ddY, ddX, ddH, ddW, attr=lattr)
 		_drawBorder(scr, ddY, ddX, ddH, ddW, 'single', lattr)
 		rows = ddH - 2

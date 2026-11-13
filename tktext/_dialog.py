@@ -170,9 +170,9 @@ class _MsgDialog(_Dialog):
 		app      = self._app
 		w, h     = self._size()
 		x, y     = self._pos()
-		attr     = app._colors.getAttr('white', 'blue')
-		titleA   = app._colors.getAttr('yellow', 'blue', bold=True)
-		selA     = app._colors.getAttr('black',  'white', bold=True)
+		attr     = app._colors.roleAttr('dialog')
+		titleA   = app._colors.roleAttr('dialog.title')
+		selA     = app._colors.roleAttr('dialog.focus')
 
 		_fillRect(scr, y, x, h, w, attr=attr)
 		_drawBorder(scr, y, x, h, w, 'double', attr)
@@ -341,11 +341,11 @@ class _FileDialog(_Dialog):
 		app    = self._app
 		x, y, w, h, listY, listH, entryY, _ = self._geometry()
 		self._listH = listH
-		attr   = app._colors.getAttr('white', 'blue')
-		titleA = app._colors.getAttr('yellow', 'blue', bold=True)
-		selA   = app._colors.getAttr('black',  'cyan')
-		focA   = app._colors.getAttr('black',  'white', bold=True)
-		dirA   = app._colors.getAttr('cyan',   'blue',  bold=True)
+		attr   = app._colors.roleAttr('dialog')
+		titleA = app._colors.roleAttr('dialog.title')
+		selA   = app._colors.roleAttr('dialog.select')
+		focA   = app._colors.roleAttr('dialog.focus')
+		dirA   = app._colors.roleAttr('dialog.dir')
 
 		_fillRect(scr, y, x, h, w, attr=attr)
 		_drawBorder(scr, y, x, h, w, 'double', attr)

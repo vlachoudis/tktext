@@ -171,6 +171,16 @@ def setColorMode(mode: str) -> None:
 	_bump()
 
 
+def isDefaultColor(name, foreground: bool = False) -> bool:
+	"""True when *name* is a palette default colour rendered with the
+	terminal's own colour (only in 'terminal' mode)."""
+	if _colorMode != 'terminal' or not name or isinstance(name, int):
+		return False
+	rgb = ColorManager.toRGB(name)
+	return rgb is not None and tuple(rgb) in \
+		(_defaultForegrounds if foreground else _defaultBackgrounds)
+
+
 def colorMode() -> str:
 	return _colorMode
 
@@ -196,6 +206,135 @@ def resetDefaultColors() -> None:
 	if _colorMode == 'terminal':
 		addDefaultColors(_TK_DEFAULT_BG, _TK_DEFAULT_FG)
 	_bump()
+
+
+# ----------------------------------------------------------------------
+# Theme: the colours tktext itself draws with, by role.  Each role is
+# (fg, bg, attrs); '' inherits the widget's own colour, attrs is a space
+# separated list of 'bold', 'reverse', 'underline', 'dim', 'blink'.
+# Widget options and the option database (option_add) win over the roles.
+# ----------------------------------------------------------------------
+_DEFAULT_THEME = {
+	'tk.window':		('black', '#d9d9d9', ''),	# pixel mode widget default
+	'tk.field':		('black', 'white', ''),		# pixel mode Entry, Text, Listbox …
+	'disabled':		('gray', '', ''),		# disabled text
+	'select':		('', '', 'reverse'),		# selected text / items
+	'focus':		('', '', 'reverse'),		# focused button, menu entry
+	'titlebar':		('black', 'white', ''),		# row 0: menubar
+	'titlebar.title':	('black', 'white', 'bold'),	# row 0: window title
+	'titlebar.disabled':	('gray', 'white', ''),		# disabled menubar entry
+	'menubar.active':	('white', 'black', 'bold'),	# open menubar entry
+	'frame.active':		('cyan', '', 'bold'),		# border of the active dialog window
+	'dialog':		('white', 'blue', ''),		# messagebox / file dialog body
+	'dialog.title':		('yellow', 'blue', 'bold'),
+	'dialog.field':		('black', 'white', ''),		# simpledialog entry
+	'entry':		('', '#3a3a3a', ''),		# Entry, Spinbox, Combobox field
+	'dialog.select':	('black', 'cyan', ''),		# selected file
+	'dialog.focus':		('black', 'white', 'bold'),	# focused button / field
+	'dialog.dir':		('cyan', 'blue', 'bold'),	# directory names
+	'dialog.error':		('red', 'blue', 'bold'),
+	'scrollbar.trough':	('', '#c3c3c3', ''),
+	'scrollbar.slider':	('', '#8c8c8c', ''),
+}
+
+# Changes to the base theme for the kind of background the widgets are
+# drawn on (the terminal's own, see _termbg).  The base suits a dark one
+# except for the Tk-gray scrollbar; a light one needs a darker frame.
+_BACKGROUND_THEMES = {
+	'dark': {
+		'scrollbar.trough':	('', '#4e4e4e', ''),
+		'scrollbar.slider':	('', '#8a8a8a', ''),
+	},
+	'light': {
+		'frame.active':		('blue', '', 'bold'),
+		'entry':		('', '#e4e4e4', ''),
+	},
+}
+
+_theme		= dict(_DEFAULT_THEME)
+_userRoles	= set()		# roles set with setTheme(): kept on background changes
+_background	= None		# 'dark', 'light' or None (not known yet)
+
+_ATTR_NAMES = ('bold', 'reverse', 'underline', 'dim', 'blink')
+
+
+def _roleValue(value):
+	"""Normalise a role value to (fg, bg, attrs)."""
+	if isinstance(value, str):
+		value = (value,)
+	value = tuple(value)
+	if not 1 <= len(value) <= 3:
+		raise ValueError(f'theme role must be (fg, bg, attrs): {value!r}')
+	fg, bg, attrs = (value + ('', '', ''))[:3]
+	attrs = ' '.join(str(attrs or '').replace(',', ' ').split())
+	for a in attrs.split():
+		if a not in _ATTR_NAMES:
+			raise ValueError(f'unknown attribute {a!r} in theme role')
+	return (fg or '', bg or '', attrs)
+
+
+def getTheme(role: str = None):
+	"""(fg, bg, attrs) of *role*, or a copy of the whole theme."""
+	if role is None:
+		return dict(_theme)
+	return _theme[role]
+
+
+def setTheme(roles: dict = None, **kw) -> None:
+	"""Change theme roles: setTheme({'dialog.title': ('white', 'red', 'bold')})
+	or setTheme(disabled=('red', '')).  Unknown roles raise ValueError."""
+	new = dict(roles or {})
+	new.update(kw)
+	for role, value in new.items():
+		if role not in _DEFAULT_THEME:
+			raise ValueError(f'unknown theme role {role!r}')
+		new[role] = _roleValue(value)
+	_theme.update(new)
+	_userRoles.update(new)
+	_bump()
+
+
+def _baseRole(role):
+	return _BACKGROUND_THEMES.get(_background, {}).get(role, _DEFAULT_THEME[role])
+
+
+def resetTheme() -> None:
+	"""Restore the default theme (for the current background)."""
+	_userRoles.clear()
+	_theme.clear()
+	_theme.update({role: _baseRole(role) for role in _DEFAULT_THEME})
+	_bump()
+
+
+def setBackground(kind) -> None:
+	"""Adapt the theme to a 'dark' or 'light' background (None: the
+	base theme).  Roles changed with setTheme() are kept."""
+	global _background
+	if kind not in (None, 'dark', 'light'):
+		raise ValueError(f'background must be dark, light or None: {kind!r}')
+	_background = kind
+	for role in _DEFAULT_THEME:
+		if role not in _userRoles:
+			_theme[role] = _baseRole(role)
+	_bump()
+
+
+def getBackground():
+	"""'dark', 'light' or None: the background the theme is adapted to."""
+	return _background
+
+
+def roleFlags(role: str) -> dict:
+	"""The attributes of *role* as getAttr() keywords."""
+	return {a: True for a in _theme[role][2].split()}
+
+
+def roleCursesFlags(role: str) -> int:
+	"""The attributes of *role* as curses A_* flags."""
+	flags = 0
+	for a in _theme[role][2].split():
+		flags |= getattr(curses, 'A_' + a.upper(), 0)
+	return flags
 
 
 class ColorManager:
@@ -327,6 +466,14 @@ class ColorManager:
 		if n in _NAMES:
 			return _BASIC_RGB[_NAMES[n]]
 		return None
+
+	def roleAttr(self, role: str, fg=None, bg=None, **kw):
+		"""Attribute of theme *role*; explicit *fg*/*bg* (e.g. the
+		widget's own colours for inherited '' values) fill the gaps."""
+		rfg, rbg, _ = _theme[role]
+		flags = roleFlags(role)
+		flags.update(kw)
+		return self.getAttr(rfg or fg or '', rbg or bg or '', **flags)
 
 	def getAttr(self, fg='', bg='', bold=False, reverse=False,
 			underline=False, dim=False, blink=False):

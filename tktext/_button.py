@@ -31,7 +31,7 @@ class Button(Widget):
 			'justify':		'center',
 			'activebackground':	'',
 			'activeforeground':	'',
-			'disabledforeground':	'gray',
+			'disabledforeground':	'',
 			'overrelief':		'',
 			'underline':		-1,
 			'default':		'normal',
@@ -104,11 +104,9 @@ class Button(Widget):
 
 		# Choose colours
 		if state == 'disabled':
-			attr = self._getAttr(fg=self._opts.get('disabledforeground') or 'gray')
+			attr = self._disabledAttr()
 		elif self._focused:
-			afg  = self._opts.get('activeforeground') or ''
-			abg  = self._opts.get('activebackground') or ''
-			attr = self._getAttr(fg=afg, bg=abg, reverse=not (afg or abg))
+			attr = self._focusAttr()
 		else:
 			attr = self._getAttr()
 

@@ -10,7 +10,6 @@
 # Author: Vasilis.Vlachoudis@cern.ch
 # Date:   12-Nov-2026
 
-import curses
 from ._core import TclError, Widget, _fillRect, _drawBorder, _addStr, _int, _initArgs, _cellX
 from ._events import (KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END,
 	KEY_BACKSPACE, KEY_DC, KEY_SHIFT_LEFT, KEY_SHIFT_RIGHT, KEY_SHIFT_HOME,
@@ -38,6 +37,8 @@ class Entry(Widget):
 	editable) or 'disabled'.
 	"""
 
+	_fieldRole = 'entry'		# default colours: the 'entry' theme role
+
 	def __init__(self, parent=None, cnf=None, **kwargs):
 		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)
@@ -50,7 +51,7 @@ class Entry(Widget):
 			'exportselection':	True,
 			'insertbackground':	'',
 			'insertwidth':		1,
-			'disabledforeground':	'gray',
+			'disabledforeground':	'',
 			'readonlybackground':	'',
 			'xscrollcommand':	None,
 		})
@@ -327,7 +328,7 @@ class Entry(Widget):
 		relief = self._opts.get('relief', 'sunken')
 
 		if state == 'disabled':
-			attr = self._getAttr(fg=self._opts.get('disabledforeground') or 'gray')
+			attr = self._disabledAttr()
 		elif state == 'readonly' and self._opts.get('readonlybackground'):
 			attr = self._getAttr(bg=self._opts.get('readonlybackground'))
 		else:
@@ -345,11 +346,7 @@ class Entry(Widget):
 		screenY = self._y + bd + (self._height - 2*bd - 1) // 2
 		screenX = self._x + bd
 
-		selAttr = attr | curses.A_REVERSE
-		sfg     = self._opts.get('selectforeground') or ''
-		sbg     = self._opts.get('selectbackground') or ''
-		if sfg or sbg:
-			selAttr = self._getAttr(fg=sfg, bg=sbg)
+		selAttr = self._selectAttr()
 
 		vis = disp[self._scrollX:self._scrollX + visW].ljust(visW)
 		if self._sel is None:

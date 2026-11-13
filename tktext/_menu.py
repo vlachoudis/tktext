@@ -45,7 +45,7 @@ class Menu(Widget):
 		self._opts.update({
 			'activeforeground':	'',
 			'activebackground':	'',
-			'disabledforeground':	'gray',
+			'disabledforeground':	'',
 			'tearoff':		0,
 			'postcommand':		None,
 			'takefocus':		False,
@@ -452,8 +452,7 @@ class Menu(Widget):
 			_drawBorder(scr, py, px, mh, mw,
 				relief if relief in ('single', 'double') else 'single', attr)
 
-		afg = self._opts.get('activeforeground') or ''
-		abg = self._opts.get('activebackground') or ''
+		actA = self._focusAttr()
 
 		for i, item in enumerate(self._menuItems):
 			iy    = py + bd + i
@@ -465,9 +464,9 @@ class Menu(Widget):
 				continue
 
 			if item.get('state', 'normal') == 'disabled':
-				rowAttr = self._getAttr(fg=self._opts.get('disabledforeground') or 'gray')
+				rowAttr = self._disabledAttr()
 			elif i == self._active:
-				rowAttr = self._getAttr(fg=afg, bg=abg, reverse=not (afg or abg))
+				rowAttr = actA
 			else:
 				rowAttr = attr
 
@@ -609,7 +608,7 @@ class OptionMenu(Widget):
 		self._opts.update({
 			'activeforeground':	'',
 			'activebackground':	'',
-			'disabledforeground':	'gray',
+			'disabledforeground':	'',
 			'command':		None,
 		})
 		kwargs.setdefault('relief', 'raised')
@@ -686,11 +685,9 @@ class OptionMenu(Widget):
 		relief  = self._opts.get('relief', 'raised')
 
 		if state == 'disabled':
-			attr = self._getAttr(fg=self._opts.get('disabledforeground') or 'gray')
+			attr = self._disabledAttr()
 		elif self._focused:
-			afg  = self._opts.get('activeforeground') or ''
-			abg  = self._opts.get('activebackground') or ''
-			attr = self._getAttr(fg=afg, bg=abg, reverse=not (afg or abg))
+			attr = self._focusAttr()
 		else:
 			attr = self._getAttr()
 

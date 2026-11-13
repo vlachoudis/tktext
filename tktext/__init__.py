@@ -52,6 +52,8 @@ from ._combobox    import Combobox
 from ._scrollbar   import Scrollbar
 from ._misc        import Separator, Progressbar
 from ._events      import Event
+from ._colors      import setTheme, resetTheme, getTheme
+from ._termbg      import terminalBackground, isDarkTerminal
 from . import ttk
 
 # ---------------------------------------------------------------------------
@@ -317,6 +319,8 @@ __all__ = [
 	'Treeview', 'Entry', 'Checkbutton', 'Radiobutton', 'Menu', 'OptionMenu',
 	'Scale', 'Spinbox', 'Notebook', 'Combobox', 'Scrollbar', 'Separator',
 	'Progressbar', 'Event', 'TclError', 'ttk',
+	# Colour theme (tktext only)
+	'setTheme', 'resetTheme', 'getTheme', 'terminalBackground', 'isDarkTerminal',
 	# Variables
 	'Variable', 'StringVar', 'IntVar', 'DoubleVar', 'BooleanVar',
 	# Direction / fill constants
@@ -471,7 +475,7 @@ class _Blocker:
 		return None
 
 
-def install(block=(), colors='terminal'):
+def install(block=(), colors='terminal', theme=None, background='auto'):
 	"""Make ``import tkinter`` (and its submodules) load tktext.
 
 	Call it before anything imports tkinter.  Modules that need a real Tk
@@ -481,6 +485,12 @@ def install(block=(), colors='terminal'):
 	*colors* 'terminal' renders the Tk palette defaults (gray background,
 	white fields, black text) with the terminal's own colours; 'tk' keeps
 	Tk's look.  The TKTEXT_COLORS environment variable overrides it.
+
+	*background* 'auto' asks the terminal whether it is dark or light;
+	'dark', 'light' or '#rrggbb' tell it (TKTEXT_BACKGROUND overrides).
+
+	*theme* is a dict of theme roles passed to setTheme(), e.g.
+	``{'dialog': ('black', 'cyan'), 'select': ('white', 'blue')}``.
 	"""
 	from . import ttk as _ttk, messagebox, filedialog, font, colorchooser, \
 		dnd, simpledialog, constants
@@ -513,4 +523,8 @@ def install(block=(), colors='terminal'):
 	setPixelMode(8, 16)
 	from ._colors import setColorMode
 	setColorMode(_os.environ.get('TKTEXT_COLORS') or colors)
+	from ._termbg import setOverride
+	setOverride(background)
+	if theme:
+		setTheme(theme)
 

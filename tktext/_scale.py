@@ -193,10 +193,10 @@ class Scale(Widget):
 		label   = self._opts.get('label') or ''
 		showval = bool(_int(self._opts.get('showvalue'), 1))
 		disabled = self._opts.get('state') == 'disabled'
-		attr    = self._getAttr(fg='gray') if disabled else self._getAttr()
-		fattr   = attr | (curses.A_REVERSE if self._focused else curses.A_BOLD)
-		tattr   = self._getAttr(bg=self._opts.get('troughcolor')) \
-			if self._opts.get('troughcolor') else attr
+		attr    = self._disabledAttr() if disabled else self._getAttr()
+		fattr   = self._focusAttr() if self._focused else attr | curses.A_BOLD
+		trough  = self._optColor('troughcolor')
+		tattr   = self._getAttr(bg=trough) if trough else attr
 
 		_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
 

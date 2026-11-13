@@ -274,9 +274,9 @@ class Notebook(Widget):
 			t     = self._tabs[i]
 			label = f' {t["text"]} '
 			if t['state'] == 'disabled':
-				tattr = self._getAttr(fg='gray')
+				tattr = self._disabledAttr()
 			elif i == self._selIdx:
-				tattr = attr | curses.A_REVERSE
+				tattr = self._roleAttr('select')
 				if self._focused:
 					tattr |= curses.A_BOLD | curses.A_UNDERLINE
 			else:
