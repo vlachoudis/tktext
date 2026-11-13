@@ -13,11 +13,13 @@
 """font — tkinter.font compatible fonts for a character terminal.
 
 Every character is one cell wide and one line high, so measure() returns
-the length of the text and the line space is 1.  Font attributes are kept
+the length of the text and the line space is 1, scaled to pixels of the
+cell size in pixel mode.  Font attributes are kept
 so that configure()/actual()/cget() round-trip; 'weight': 'bold' and
 'underline' are used by widgets that honour fonts.
 """
 from ._core import TclError
+from . import _core
 
 NORMAL		= 'normal'
 ROMAN		= 'roman'
@@ -119,10 +121,10 @@ class Font:
 	config = configure
 
 	def measure(self, text, displayof=None):
-		return max((len(l) for l in str(text).split('\n')), default=0)
+		return max((len(l) for l in str(text).split('\n')), default=0) * _core.PX
 
 	def metrics(self, *options, **kw):
-		values = {'ascent': 1, 'descent': 0, 'linespace': 1, 'fixed': 1}
+		values = {'ascent': _core.PY, 'descent': 0, 'linespace': _core.PY, 'fixed': 1}
 		if len(options) == 1:
 			return values[options[0].lstrip('-')]
 		if options:
