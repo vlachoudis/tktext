@@ -72,10 +72,10 @@ class _ScrollMixin:
 		return _int(idx)
 
 	def yview_moveto(self, fraction):
-		self.yview('moveto', fraction)
+		_ScrollMixin.yview(self, 'moveto', fraction)
 
 	def yview_scroll(self, number, what):
-		self.yview('scroll', number, what)
+		_ScrollMixin.yview(self, 'scroll', number, what)
 
 	yviewMoveto = yview_moveto
 	yviewScroll = yview_scroll
@@ -136,7 +136,7 @@ class Listbox(_ScrollMixin, Widget):
 		kwargs.setdefault('width', 20)
 		kwargs.setdefault('height', 10)
 
-		self._items    = []		# list of str
+		self._lbItems  = []		# list of str
 		self._itemCfg  = {}		# index -> {'fg':…, 'bg':…}
 		self._sel      = set()		# set of selected indices
 		self._active   = 0		# active (cursor) index
@@ -168,17 +168,17 @@ class Listbox(_ScrollMixin, Widget):
 			return
 		val = lv.get()
 		if isinstance(val, (list, tuple)):
-			self._items = [str(v) for v in val]
+			self._lbItems = [str(v) for v in val]
 		elif val:
-			self._items = str(val).split()
+			self._lbItems = str(val).split()
 		else:
-			self._items = []
+			self._lbItems = []
 
 	def _storeListVariable(self):
 		lv = self._opts.get('listvariable')
 		if lv is not None and hasattr(lv, 'set'):
 			try:
-				lv.set(tuple(self._items))
+				lv.set(tuple(self._lbItems))
 			except (TypeError, ValueError):
 				pass
 
@@ -189,33 +189,33 @@ class Listbox(_ScrollMixin, Widget):
 	def insert(self, idx, *elements):
 		"""Insert *elements* at *idx* ('end' or integer)."""
 		if idx in ('end', 'END'):
-			pos = len(self._items)
+			pos = len(self._lbItems)
 		else:
-			pos = max(0, min(self._resolveIdx(idx), len(self._items)))
+			pos = max(0, min(self._resolveIdx(idx), len(self._lbItems)))
 		n = len(elements)
 		for i, elem in enumerate(elements):
-			self._items.insert(pos + i, str(elem))
+			self._lbItems.insert(pos + i, str(elem))
 
 		# Shift indices after the insertion point
 		self._sel     = {(s + n if s >= pos else s) for s in self._sel}
 		self._itemCfg = {(k + n if k >= pos else k): v for k, v in self._itemCfg.items()}
-		if self._active >= pos and len(self._items) > n:
+		if self._active >= pos and len(self._lbItems) > n:
 			self._active += n
 		self._storeListVariable()
 		self._markDirty()
 
 	def delete(self, first, last=None):
 		"""Delete items from *first* to *last* inclusive."""
-		if not self._items:
+		if not self._lbItems:
 			return
 		first = self._resolveIdx(first)
 		last  = self._resolveIdx(last) if last is not None else first
 		first = max(0, first)
-		last  = min(last, len(self._items) - 1)
+		last  = min(last, len(self._lbItems) - 1)
 		if first > last:
 			return
 		n = last - first + 1
-		del self._items[first:last+1]
+		del self._lbItems[first:last+1]
 
 		def shift(i):
 			return i - n if i > last else i
@@ -226,7 +226,7 @@ class Listbox(_ScrollMixin, Widget):
 			self._active -= n
 		elif self._active >= first:
 			self._active = first
-		self._active = max(0, min(self._active, len(self._items) - 1))
+		self._active = max(0, min(self._active, len(self._lbItems) - 1))
 		self._storeListVariable()
 		self._markDirty()
 
@@ -234,15 +234,15 @@ class Listbox(_ScrollMixin, Widget):
 		"""Return item(s) at *first* [through *last*]."""
 		first = self._resolveIdx(first)
 		if last is None:
-			if 0 <= first < len(self._items):
-				return self._items[first]
+			if 0 <= first < len(self._lbItems):
+				return self._lbItems[first]
 			return ''
 		last = self._resolveIdx(last)
-		return tuple(self._items[max(0, first):last+1])
+		return tuple(self._lbItems[max(0, first):last+1])
 
 	def size(self):
 		"""Return number of items."""
-		return len(self._items)
+		return len(self._lbItems)
 
 	def curselection(self):
 		"""Return tuple of currently selected indices."""
@@ -253,7 +253,7 @@ class Listbox(_ScrollMixin, Widget):
 		last  = self._resolveIdx(last) if last is not None else first
 		if first > last:
 			first, last = last, first
-		return range(max(0, first), min(last, len(self._items) - 1) + 1)
+		return range(max(0, first), min(last, len(self._lbItems) - 1) + 1)
 
 	def selectionSet(self, first, last=None):
 		"""Select items from *first* to *last*."""
@@ -286,14 +286,14 @@ class Listbox(_ScrollMixin, Widget):
 
 	def activate(self, idx):
 		"""Set active item."""
-		if self._items:
-			self._active = max(0, min(self._resolveIdx(idx), len(self._items) - 1))
+		if self._lbItems:
+			self._active = max(0, min(self._resolveIdx(idx), len(self._lbItems) - 1))
 		self._markDirty()
 
 	def index(self, idx):
 		"""Return numeric index for *idx*."""
 		if idx in ('end', 'END'):
-			return len(self._items)
+			return len(self._lbItems)
 		return self._resolveIdx(idx)
 
 	def see(self, idx):
@@ -304,13 +304,13 @@ class Listbox(_ScrollMixin, Widget):
 	def nearest(self, y):
 		"""Return index of the item nearest to widget-relative *y*."""
 		i = self._scrollY + (_cellY(y) - self._border())
-		return max(0, min(i, len(self._items) - 1))
+		return max(0, min(i, len(self._lbItems) - 1))
 
 	def bbox(self, idx):
 		"""Return (x, y, width, height) of item *idx* relative to the widget."""
 		bd = self._border()
 		i  = self._resolveIdx(idx) - self._scrollY
-		if 0 <= i < self._visRows() and self._resolveIdx(idx) < len(self._items):
+		if 0 <= i < self._visRows() and self._resolveIdx(idx) < len(self._lbItems):
 			return _pxBox((bd, bd + i, self._width - 2*bd, 1))
 		return None
 
@@ -356,7 +356,7 @@ class Listbox(_ScrollMixin, Widget):
 			return idx
 		s = str(idx)
 		if s in ('end', 'END'):
-			return max(0, len(self._items) - 1)
+			return max(0, len(self._lbItems) - 1)
 		if s == 'active':
 			return self._active
 		if s == 'anchor':
@@ -378,22 +378,22 @@ class Listbox(_ScrollMixin, Widget):
 		return max(1, self._height - 2*self._border())
 
 	def _totalRows(self) -> int:
-		return len(self._items)
+		return len(self._lbItems)
 
 	def _preferredSize(self):
 		bd = self._cfgBorder()
 		ow = _int(self._opts.get('width'), 20)
 		oh = _int(self._opts.get('height'), 10)
 		if ow <= 0:
-			ow = max((len(s) for s in self._items), default=1)
+			ow = max((len(s) for s in self._lbItems), default=1)
 		if oh <= 0:
-			oh = max(1, len(self._items))
+			oh = max(1, len(self._lbItems))
 		return (ow + 2*bd, oh + 2*bd)
 
 	def _preRender(self):
 		self._clampScroll()
-		if self._items:
-			self._active = max(0, min(self._active, len(self._items) - 1))
+		if self._lbItems:
+			self._active = max(0, min(self._active, len(self._lbItems) - 1))
 		self._notifyYScroll()
 
 	# ------------------------------------------------------------------
@@ -425,9 +425,9 @@ class Listbox(_ScrollMixin, Widget):
 		sbg = self._opts.get('selectbackground') or ''
 		for i in range(visH):
 			itemIdx = self._scrollY + i
-			if itemIdx >= len(self._items):
+			if itemIdx >= len(self._lbItems):
 				break
-			text       = _pad(self._items[itemIdx], visW)
+			text       = _pad(self._lbItems[itemIdx], visW)
 			isSelected = itemIdx in self._sel
 			isActive   = itemIdx == self._active and self._focused
 
@@ -459,8 +459,30 @@ class Listbox(_ScrollMixin, Widget):
 	def _fireSelect(self):
 		self._fireVirtual('<<ListboxSelect>>', index=self._active)
 
+	# Tk's Listbox class bindings of virtual events
+	_VIRTUAL_KEYS = {
+		'<<PrevLine>>':		KEY_UP,
+		'<<NextLine>>':		KEY_DOWN,
+		'<<SelectPrevLine>>':	KEY_SHIFT_UP,
+		'<<SelectNextLine>>':	KEY_SHIFT_DOWN,
+	}
+
+	def _handleVirtual(self, sequence):
+		key = self._VIRTUAL_KEYS.get(sequence)
+		if key is not None:
+			return self._handleKey(key)
+		mode = self._opts.get('selectmode', 'browse')
+		if sequence == '<<SelectAll>>' and mode in ('multiple', 'extended'):
+			self._sel = set(range(len(self._lbItems)))
+		elif sequence == '<<SelectNone>>' and mode != 'browse':
+			self._sel = set()
+		else:
+			return False
+		self._fireSelect()
+		return True
+
 	def _handleKey(self, key):
-		if self._opts.get('state') == 'disabled' or not self._items:
+		if self._opts.get('state') == 'disabled' or not self._lbItems:
 			return False
 
 		mode   = self._opts.get('selectmode', 'browse')
@@ -473,15 +495,15 @@ class Listbox(_ScrollMixin, Widget):
 		if key == KEY_UP:
 			self._active = max(0, self._active - 1)
 		elif key == KEY_DOWN:
-			self._active = min(len(self._items) - 1, self._active + 1)
+			self._active = min(len(self._lbItems) - 1, self._active + 1)
 		elif key == KEY_HOME:
 			self._active = 0
 		elif key == KEY_END:
-			self._active = len(self._items) - 1
+			self._active = len(self._lbItems) - 1
 		elif key == KEY_PPAGE:
 			self._active = max(0, self._active - visH)
 		elif key == KEY_NPAGE:
-			self._active = min(len(self._items) - 1, self._active + visH)
+			self._active = min(len(self._lbItems) - 1, self._active + visH)
 		elif key == KEY_SPACE:
 			self._clickSelect(self._active, mode)
 			self._fireSelect()
@@ -564,7 +586,7 @@ class Listbox(_ScrollMixin, Widget):
 			return True
 
 		i = self._scrollY + (my - by)
-		if not (0 <= i < len(self._items)):
+		if not (0 <= i < len(self._lbItems)):
 			return False
 		mode = self._opts.get('selectmode', 'browse')
 		if press or (clicked and not bstate & B1_DCLICK):

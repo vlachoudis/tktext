@@ -256,6 +256,29 @@ def _scalePad(value, conv):
 	return conv(value, True)
 
 
+_GEO_OPTIONS = {
+	'pack':  ('after', 'anchor', 'before', 'expand', 'fill', 'in',
+		  'ipadx', 'ipady', 'padx', 'pady', 'side'),
+	'grid':  ('column', 'columnspan', 'in', 'ipadx', 'ipady', 'padx',
+		  'pady', 'row', 'rowspan', 'sticky'),
+	'place': ('anchor', 'bordermode', 'height', 'in', 'relheight',
+		  'relwidth', 'relx', 'rely', 'width', 'x', 'y'),
+}
+
+
+def _expandGeoOpts(manager, kwargs):
+	"""Expand unique abbreviations of pack/grid/place options in place,
+	as Tk does (e.g. grid(stick='nsew') means sticky='nsew')."""
+	names = _GEO_OPTIONS[manager]
+	for key in list(kwargs):
+		name = key.rstrip('_')
+		if name in names:
+			continue
+		match = [n for n in names if n.startswith(name)]
+		if name and len(match) == 1 and match[0] not in kwargs:
+			kwargs[match[0]] = kwargs.pop(key)
+
+
 def _scaleGeoOpts(opts):
 	"""Convert pack/grid/place options from pixels to cells in place."""
 	if PX == 1 and PY == 1:
@@ -308,6 +331,7 @@ class Widget:
 	_lastGeom	= None		# geometry of the last <Configure>
 	_clickFocus	= True		# a mouse press gives the keyboard focus
 	_propagate	= True		# pack_propagate / grid_propagate
+	_rendersChildren = False	# containers draw their children in render()
 
 	def __init__(self, parent=None, cnf=None, **kwargs):
 		if type(self) is not Widget and not self._isRoot:
@@ -599,6 +623,8 @@ class Widget:
 		table = app._classBindings.get(self.winfo_class())
 		if table is not None and table._dispatch(sequence, evt) == 'break':
 			return 'break'
+		if self._handleVirtual(sequence):
+			self._markDirty()
 		top = self.winfo_toplevel()
 		if top is not None and top is not self and \
 				top._dispatch(sequence, evt) == 'break':
@@ -618,6 +644,7 @@ class Widget:
 	def _geoPlace(self, manager, kwargs):
 		"""Handle the in_/before/after options and Tk's packing order: a
 		widget that starts being managed goes to the end of the order."""
+		_expandGeoOpts(manager, kwargs)
 		master = kwargs.pop('in_', None) or kwargs.pop('in', None)
 		before = kwargs.pop('before', None)
 		after  = kwargs.pop('after', None)
@@ -1709,6 +1736,19 @@ class Widget:
 				return hit
 		return self
 
+	def _layoutChildren(self):
+		"""Tk allows place() inside any widget (e.g. a popup list placed
+		over a Text).  Containers override this; for the other widgets
+		lay out the placed children inside the border."""
+		placed = [(c, c._geoInfo) for c in self._children if c._geoManager == 'place']
+		if not placed:
+			return
+		from ._layout import doPlaceLayout
+		from ._frame import _InnerGeom
+		bd = self._border()
+		doPlaceLayout(_InnerGeom(self._x + bd, self._y + bd,
+			max(0, self._width - 2*bd), max(0, self._height - 2*bd)), placed)
+
 	def _preRender(self):
 		"""Called after layout, before drawing: clamp scroll offsets,
 		notify scroll commands …  Containers recurse into children."""
@@ -1727,7 +1767,14 @@ class Widget:
 	def _renderChildren(self, scr):
 		for child in self._children:
 			if child._geoManager is not None and child._isMapped():
-				child.render(scr)
+				child._renderWithSlaves(scr)
+
+	def _renderWithSlaves(self, scr):
+		"""Draw the widget, then the widgets placed inside it when the
+		widget is not a container that draws its own children."""
+		self.render(scr)
+		if not self._rendersChildren:
+			self._renderChildren(scr)
 
 	# ------------------------------------------------------------------
 	# Input dispatch
@@ -1743,6 +1790,17 @@ class Widget:
 	def _handleMouse(self, mx, my, bstate):
 		"""Default class behaviour for a mouse event.  Return True if consumed."""
 		return False
+
+	def _handleVirtual(self, sequence):
+		"""Class behaviour for a virtual event generated on the widget
+		(Tk's class bindings, e.g. Listbox <<PrevLine>>).  Return True
+		if handled."""
+		return False
+
+	def _pointerAt(self, mx, my):
+		"""The pointer is at screen (mx, my) before the bindings run
+		(Text moves its 'current' mark there, like Tk)."""
+		pass
 
 	# Helpers for subclasses
 	def _wheel(self, bstate) -> int:

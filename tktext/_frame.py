@@ -18,6 +18,7 @@ from ._layout import doPackLayout, doGridLayout, doPlaceLayout, \
 class Frame(Widget):
 	"""Container widget.  Supports pack, grid, and place geometry managers
 	for its children.  Mirrors tkinter.Frame / tkinter.ttk.Frame."""
+	_rendersChildren = True
 
 	_pixelSize = True
 

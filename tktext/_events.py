@@ -11,6 +11,7 @@
 # Date:   12-Nov-2026
 
 import curses
+import time as _time
 
 # Useful key constants
 KEY_UP		= curses.KEY_UP
@@ -143,6 +144,16 @@ class Event:
 		self.state	= 0
 		self.delta	= 0
 		self.data	= None
+		# remaining tkinter.Event attributes
+		self.time	= int(_time.monotonic() * 1000) & 0xFFFFFFFF	# ms
+		self.serial	= Event._serial = (Event._serial + 1) & 0xFFFFFFFF
+		self.send_event	= False
+		self.keysym_num	= 0
+		self.focus	= False
+		self.width	= 0
+		self.height	= 0
+
+	_serial = 0
 
 	def __repr__(self):
 		return f'<Event {self.type} keysym={self.keysym!r} x={self.x} y={self.y}>'
@@ -177,6 +188,8 @@ class KeyEvent(Event):
 				self.state = STATE_SHIFT
 		else:
 			self.char = str(key)
+		if len(self.char) == 1 and self.char.isprintable():
+			self.keysym_num = ord(self.char)	# X keysym of a character
 
 	def patterns(self) -> list:
 		"""Return the binding strings this key matches, most specific first."""

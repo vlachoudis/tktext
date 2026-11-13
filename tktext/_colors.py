@@ -336,7 +336,10 @@ class ColorManager:
 				else:
 					pn = self._next
 					try:
-						curses.init_pair(pn, self._resolve(fg), self._resolve(bg))
+						# the pair is shared by every colour with the same
+						# mapped key: build it from the key, not from fg/bg
+						curses.init_pair(pn, self._resolve(key[0]),
+							self._resolve(key[1]))
 						self._next += 1
 					except (curses.error, ValueError):
 						pn = 0

@@ -57,7 +57,7 @@ class Treeview(_ScrollMixin, Widget):
 
 		# Items: iid -> dict with keys:
 		#   text, values, open, tags, parent, children
-		self._items = {'': {
+		self._treeItems = {'': {
 			'text': '', 'values': [], 'open': True,
 			'tags': [], 'parent': None, 'children': [], 'image': '',
 		}}
@@ -168,32 +168,32 @@ class Treeview(_ScrollMixin, Widget):
 
 	def _tagNames(self):
 		names = set(self._tagCfg)
-		for n in self._items.values():
+		for n in self._treeItems.values():
 			names.update(n.get('tags') or ())
 		return tuple(sorted(names))
 
 	def _tagAdd(self, tag, items):
 		"""Tk 8.6.9+ '$tv tag add tag items'."""
 		for iid in items:
-			node = self._items.get(str(iid))
+			node = self._treeItems.get(str(iid))
 			if node is not None and tag not in node['tags']:
 				node['tags'] = list(node['tags']) + [tag]
 		self._markDirty()
 
 	def _tagRemove(self, tag, items=None):
 		"""'$tv tag remove tag ?items?' (all items when omitted)."""
-		targets = self._items.keys() if items is None else [str(i) for i in items]
+		targets = self._treeItems.keys() if items is None else [str(i) for i in items]
 		for iid in targets:
-			node = self._items.get(iid)
+			node = self._treeItems.get(iid)
 			if node is not None and tag in node['tags']:
 				node['tags'] = [t for t in node['tags'] if t != tag]
 		self._markDirty()
 
 	def tagHas(self, tagname, item=None):
 		if item is None:
-			return tuple(iid for iid, n in self._items.items()
+			return tuple(iid for iid, n in self._treeItems.items()
 				if iid and tagname in n['tags'])
-		return tagname in self._items.get(str(item), {}).get('tags', [])
+		return tagname in self._treeItems.get(str(item), {}).get('tags', [])
 
 	def tagBind(self, tagname, sequence=None, callback=None):
 		self._tagBinds.setdefault(tagname, {}).setdefault(sequence, []).append(callback)
@@ -216,17 +216,17 @@ class Treeview(_ScrollMixin, Widget):
 			while True:
 				self._iidCounter += 1
 				iid = f'I{self._iidCounter:03X}'
-				if iid not in self._items:
+				if iid not in self._treeItems:
 					break
 		iid    = str(iid)
 		parent = str(parent)
 
-		if parent not in self._items:
+		if parent not in self._treeItems:
 			raise TclError(f'Item {parent} not found')
-		if iid in self._items:
+		if iid in self._treeItems:
 			raise TclError(f'Item {iid} already exists')
 
-		self._items[iid] = {
+		self._treeItems[iid] = {
 			'text':     str(kwargs.get('text', '')),
 			'values':   _asList(kwargs.get('values')),
 			'open':     bool(kwargs.get('open', False)),
@@ -236,7 +236,7 @@ class Treeview(_ScrollMixin, Widget):
 			'children': [],
 		}
 
-		siblings = self._items[parent]['children']
+		siblings = self._treeItems[parent]['children']
 		if index in ('end', 'END'):
 			siblings.append(iid)
 		else:
@@ -250,7 +250,7 @@ class Treeview(_ScrollMixin, Widget):
 		"""Delete items (and their subtrees)."""
 		changed = False
 		for iid in _flatten(items):
-			if iid in self._items and iid != '':
+			if iid in self._treeItems and iid != '':
 				changed |= iid in self._sel
 				self._deleteSubtree(iid)
 		self._flatCache = None
@@ -259,17 +259,17 @@ class Treeview(_ScrollMixin, Widget):
 			self._fireVirtual('<<TreeviewSelect>>')
 
 	def _deleteSubtree(self, iid):
-		item = self._items.get(iid)
+		item = self._treeItems.get(iid)
 		if not item:
 			return
 		for child in list(item['children']):
 			self._deleteSubtree(child)
 		parent = item['parent']
-		if parent is not None and parent in self._items:
-			siblings = self._items[parent]['children']
+		if parent is not None and parent in self._treeItems:
+			siblings = self._treeItems[parent]['children']
 			if iid in siblings:
 				siblings.remove(iid)
-		del self._items[iid]
+		del self._treeItems[iid]
 		if iid in self._sel:
 			self._sel.remove(iid)
 		if self._focusIid == iid:
@@ -278,11 +278,11 @@ class Treeview(_ScrollMixin, Widget):
 	def detach(self, *items):
 		"""Remove items from tree without deleting them."""
 		for iid in _flatten(items):
-			item = self._items.get(iid)
+			item = self._treeItems.get(iid)
 			if item and iid != '':
 				p = item['parent']
-				if p is not None and p in self._items:
-					sib = self._items[p]['children']
+				if p is not None and p in self._treeItems:
+					sib = self._treeItems[p]['children']
 					if iid in sib:
 						sib.remove(iid)
 				item['parent'] = None
@@ -293,15 +293,15 @@ class Treeview(_ScrollMixin, Widget):
 		"""Reattach (move) *item* under *parent* at *index*."""
 		item   = str(item)
 		parent = str(parent)
-		if item not in self._items or parent not in self._items:
+		if item not in self._treeItems or parent not in self._treeItems:
 			raise TclError(f'Item {item} not found')
-		old = self._items[item]['parent']
-		if old is not None and old in self._items:
-			sib = self._items[old]['children']
+		old = self._treeItems[item]['parent']
+		if old is not None and old in self._treeItems:
+			sib = self._treeItems[old]['children']
 			if item in sib:
 				sib.remove(item)
-		self._items[item]['parent'] = parent
-		siblings = self._items[parent]['children']
+		self._treeItems[item]['parent'] = parent
+		siblings = self._treeItems[parent]['children']
 		if index in ('end', 'END'):
 			siblings.append(item)
 		else:
@@ -314,9 +314,9 @@ class Treeview(_ScrollMixin, Widget):
 	def item(self, iid, option=None, **kwargs):
 		"""Get or set item options."""
 		iid = str(iid)
-		if iid not in self._items:
+		if iid not in self._treeItems:
 			raise TclError(f'Item {iid} not found')
-		node = self._items[iid]
+		node = self._treeItems[iid]
 		if option is not None:
 			if option in ('values', 'tags'):
 				return tuple(node[option])
@@ -341,7 +341,7 @@ class Treeview(_ScrollMixin, Widget):
 	def set(self, item, column=None, value=None):
 		"""Get or set the value of *column* in *item*."""
 		item = str(item)
-		node = self._items.get(item)
+		node = self._treeItems.get(item)
 		if node is None:
 			raise TclError(f'Item {item} not found')
 		cols = list(self._opts.get('columns') or [])
@@ -363,7 +363,7 @@ class Treeview(_ScrollMixin, Widget):
 
 	def getChildren(self, item=''):
 		"""Return tuple of children iids of *item*."""
-		node = self._items.get(str(item) if item is not None else '')
+		node = self._treeItems.get(str(item) if item is not None else '')
 		return tuple(node['children']) if node else ()
 
 	def setChildren(self, item, *newchildren):
@@ -375,7 +375,7 @@ class Treeview(_ScrollMixin, Widget):
 
 	def getParent(self, item):
 		"""Return parent iid of *item*."""
-		node = self._items.get(str(item))
+		node = self._treeItems.get(str(item))
 		return (node['parent'] or '') if node else ''
 
 	get_children	= getChildren
@@ -385,32 +385,32 @@ class Treeview(_ScrollMixin, Widget):
 
 	def index(self, item):
 		"""Return integer index of *item* among its siblings."""
-		node = self._items.get(str(item))
+		node = self._treeItems.get(str(item))
 		if not node or node['parent'] is None:
 			return 0
-		siblings = self._items[node['parent']]['children']
+		siblings = self._treeItems[node['parent']]['children']
 		return siblings.index(str(item)) if str(item) in siblings else 0
 
 	def prev(self, item):
 		"""Return the iid preceding *item* among its siblings."""
-		node = self._items.get(str(item))
+		node = self._treeItems.get(str(item))
 		if not node or node['parent'] is None:
 			return ''
-		siblings = self._items[node['parent']]['children']
+		siblings = self._treeItems[node['parent']]['children']
 		idx = siblings.index(str(item))
 		return siblings[idx - 1] if idx > 0 else ''
 
 	def next(self, item):
 		"""Return the iid following *item* among its siblings."""
-		node = self._items.get(str(item))
+		node = self._treeItems.get(str(item))
 		if not node or node['parent'] is None:
 			return ''
-		siblings = self._items[node['parent']]['children']
+		siblings = self._treeItems[node['parent']]['children']
 		idx = siblings.index(str(item))
 		return siblings[idx + 1] if idx < len(siblings) - 1 else ''
 
 	def exists(self, item):
-		return str(item) in self._items
+		return str(item) in self._treeItems
 
 	# Selection
 
@@ -423,7 +423,7 @@ class Treeview(_ScrollMixin, Widget):
 		return tuple(self._sel)
 
 	def _setSelection(self, newSel):
-		newSel = [i for i in newSel if i in self._items and i != '']
+		newSel = [i for i in newSel if i in self._treeItems and i != '']
 		if newSel != self._sel:
 			self._sel = newSel
 			self._markDirty()
@@ -466,13 +466,13 @@ class Treeview(_ScrollMixin, Widget):
 	def see(self, item):
 		"""Open the ancestors of *item* and scroll it into view."""
 		iid  = str(item)
-		node = self._items.get(iid)
+		node = self._treeItems.get(iid)
 		if node is None:
 			return
 		p = node['parent']
 		while p:
-			self._items[p]['open'] = True
-			p = self._items[p]['parent']
+			self._treeItems[p]['open'] = True
+			p = self._treeItems[p]['parent']
 		self._flatCache = None
 		for i, (fid, _) in enumerate(self._getFlat()):
 			if fid == iid:
@@ -482,7 +482,7 @@ class Treeview(_ScrollMixin, Widget):
 
 	def open(self, item, value=None):
 		"""Get or set open state of *item*."""
-		node = self._items.get(str(item))
+		node = self._treeItems.get(str(item))
 		if node is None:
 			return False
 		if value is None:
@@ -504,7 +504,7 @@ class Treeview(_ScrollMixin, Widget):
 		return self._flatCache
 
 	def _buildFlat(self, iid, depth, result):
-		node = self._items.get(iid)
+		node = self._treeItems.get(iid)
 		if node is None:
 			return
 		if iid != '':
@@ -579,7 +579,7 @@ class Treeview(_ScrollMixin, Widget):
 
 	def _getItemAttr(self, iid):
 		"""Return curses attr for item, considering tags."""
-		node  = self._items.get(str(iid), {})
+		node  = self._treeItems.get(str(iid), {})
 		fg = bg = ''
 		bold = False
 		for tag in node.get('tags', []):
@@ -634,7 +634,7 @@ class Treeview(_ScrollMixin, Widget):
 			if flatIdx >= len(flat):
 				break
 			iid, depth = flat[flatIdx]
-			node = self._items.get(iid, {})
+			node = self._treeItems.get(iid, {})
 			if iid in self._sel:
 				rowAttr = attr | curses.A_REVERSE
 			else:
@@ -692,7 +692,7 @@ class Treeview(_ScrollMixin, Widget):
 		if self.identifyColumn(x) == '#0':
 			depth = dict(self._getFlat()).get(row, 0)
 			mx    = self._border() + 2 * depth
-			if mx <= _cellX(x) < mx + 2 and self._items[row]['children']:
+			if mx <= _cellX(x) < mx + 2 and self._treeItems[row]['children']:
 				return 'tree'
 		return 'cell'
 
@@ -756,7 +756,7 @@ class Treeview(_ScrollMixin, Widget):
 		return 0
 
 	def _toggle(self, iid):
-		node = self._items.get(iid)
+		node = self._treeItems.get(iid)
 		if not node or not node['children']:
 			return
 		node['open'] = not node['open']
@@ -795,7 +795,7 @@ class Treeview(_ScrollMixin, Widget):
 			ci = min(len(flat) - 1, ci + visH)
 		elif key == KEY_RIGHT:
 			iid  = flat[ci][0]
-			node = self._items[iid]
+			node = self._treeItems[iid]
 			if node['children'] and not node['open']:
 				self._toggle(iid)
 				return True
@@ -803,7 +803,7 @@ class Treeview(_ScrollMixin, Widget):
 				ci = min(len(flat) - 1, ci + 1)
 		elif key == KEY_LEFT:
 			iid  = flat[ci][0]
-			node = self._items[iid]
+			node = self._treeItems[iid]
 			if node['open'] and node['children']:
 				self._toggle(iid)
 				return True
@@ -812,7 +812,7 @@ class Treeview(_ScrollMixin, Widget):
 				ci = next(j for j, (p, _) in enumerate(flat) if p == parent)
 		elif key in (KEY_ENTER, KEY_SPACE):
 			iid = flat[ci][0]
-			if key == KEY_SPACE or not self._items[iid]['children']:
+			if key == KEY_SPACE or not self._treeItems[iid]['children']:
 				self._selectRow(iid)
 			else:
 				self._toggle(iid)
@@ -886,7 +886,7 @@ class Treeview(_ScrollMixin, Widget):
 			return True
 		markerX = self._x + bd + 2 * depth
 		if '#0' in self._colList()[:1] and markerX <= mx < markerX + 2 and \
-				self._items[iid]['children']:
+				self._treeItems[iid]['children']:
 			self._toggle(iid)
 		self._selectRow(iid)
 		return True

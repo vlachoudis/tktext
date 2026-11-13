@@ -55,7 +55,7 @@ class Menu(Widget):
 		if kwargs:
 			Menu.configure(self, **kwargs)
 
-		self._items       = []	# list of item dicts
+		self._menuItems   = []	# list of item dicts
 		self._active      = -1	# highlighted row index
 		self._posted      = False
 		self._postX       = 0
@@ -89,7 +89,7 @@ class Menu(Widget):
 		"""Add an item of *itemType* ('command', 'separator', etc.)."""
 		if cnf:
 			kwargs.update(cnf)
-		self._items.append(self._makeItem(itemType, kwargs))
+		self._menuItems.append(self._makeItem(itemType, kwargs))
 		self._markDirty()
 
 	def add_command(self, cnf=None, **kwargs):
@@ -121,12 +121,12 @@ class Menu(Widget):
 	def delete(self, index1: object, index2: object = None):
 		"""Delete items from index1 to index2 (inclusive)."""
 		i1 = self._resolveIndex(index1)
-		if i1 < 0 or i1 >= len(self._items):
+		if i1 < 0 or i1 >= len(self._menuItems):
 			return
 		i2 = i1 if index2 is None else min(self._resolveIndex(index2),
-			len(self._items) - 1)
-		del self._items[i1:i2 + 1]
-		if self._active >= len(self._items):
+			len(self._menuItems) - 1)
+		del self._menuItems[i1:i2 + 1]
+		if self._active >= len(self._menuItems):
 			self._active = self._firstSelectable()
 		self._markDirty()
 
@@ -136,8 +136,8 @@ class Menu(Widget):
 			kwargs.update(cnf)
 		i = self._resolveIndex(idx)
 		if i < 0:
-			i = len(self._items)
-		self._items.insert(i, self._makeItem(itemType, kwargs))
+			i = len(self._menuItems)
+		self._menuItems.insert(i, self._makeItem(itemType, kwargs))
 		self._markDirty()
 
 	def insert_command(self, index, cnf=None, **kw):
@@ -160,10 +160,10 @@ class Menu(Widget):
 		if cnf:
 			kwargs.update(cnf)
 		i = self._resolveIndex(index)
-		if 0 <= i < len(self._items):
+		if 0 <= i < len(self._menuItems):
 			if not kwargs:
-				return dict(self._items[i])
-			self._items[i].update(kwargs)
+				return dict(self._menuItems[i])
+			self._menuItems[i].update(kwargs)
 			sub = kwargs.get('menu')
 			if sub is not None:
 				sub._parentMenu = self
@@ -177,8 +177,8 @@ class Menu(Widget):
 	def entrycget(self, index: object, option: str):
 		"""Return value of *option* for item at *index*."""
 		i = self._resolveIndex(index)
-		if 0 <= i < len(self._items):
-			return self._items[i].get(option)
+		if 0 <= i < len(self._menuItems):
+			return self._menuItems[i].get(option)
 		return None
 
 	entryCget = entrycget
@@ -200,8 +200,8 @@ class Menu(Widget):
 	def type(self, idx: object) -> str:
 		"""Return type string for item at *idx*."""
 		i = self._resolveIndex(idx)
-		if 0 <= i < len(self._items):
-			return self._items[i]['type']
+		if 0 <= i < len(self._menuItems):
+			return self._menuItems[i]['type']
 		return ''
 
 	# ------------------------------------------------------------------
@@ -221,7 +221,7 @@ class Menu(Widget):
 		self._postX  = int(x)
 		self._postY  = int(y)
 		self._posted = True
-		if not (0 <= self._active < len(self._items)) or \
+		if not (0 <= self._active < len(self._menuItems)) or \
 				not self._selectable(self._active):
 			self._active = self._firstSelectable()
 		app = self._getApp()
@@ -234,7 +234,7 @@ class Menu(Widget):
 	def unpost(self):
 		"""Hide this menu (and any open submenus)."""
 		# Close any open cascades first
-		for item in self._items:
+		for item in self._menuItems:
 			sub = item.get('menu')
 			if sub is not None and sub._posted:
 				sub.unpost()
@@ -264,9 +264,9 @@ class Menu(Widget):
 	def invoke(self, idx: object):
 		"""Invoke the item at *idx*."""
 		i = self._resolveIndex(idx)
-		if not (0 <= i < len(self._items)):
+		if not (0 <= i < len(self._menuItems)):
 			return None
-		item  = self._items[i]
+		item  = self._menuItems[i]
 		itype = item['type']
 		if item.get('state', 'normal') == 'disabled' or itype == 'separator':
 			return None
@@ -292,12 +292,12 @@ class Menu(Widget):
 		return None
 
 	def _openCascade(self, i):
-		item = self._items[i]
+		item = self._menuItems[i]
 		sub  = item.get('menu')
 		if sub is None:
 			return
 		# close sibling cascades
-		for j, other in enumerate(self._items):
+		for j, other in enumerate(self._menuItems):
 			o = other.get('menu')
 			if j != i and o is not None and o._posted:
 				o.unpost()
@@ -319,7 +319,7 @@ class Menu(Widget):
 		"""Return total menu width including borders."""
 		bd   = self._border()
 		maxW = 0
-		for item in self._items:
+		for item in self._menuItems:
 			if item['type'] == 'separator':
 				continue
 			label  = str(item.get('label', ''))
@@ -334,7 +334,7 @@ class Menu(Widget):
 
 	def _menuHeight(self) -> int:
 		"""Return total menu height including borders."""
-		return len(self._items) + 2*self._border()
+		return len(self._menuItems) + 2*self._border()
 
 	def _screenRect(self):
 		"""Return (x, y, w, h) where the menu is drawn (clamped to screen)."""
@@ -356,7 +356,7 @@ class Menu(Widget):
 
 	def _resolveIndex(self, idx: object) -> int:
 		if idx in ('end', 'last'):
-			return len(self._items) - 1
+			return len(self._menuItems) - 1
 		if idx == 'active':
 			return self._active
 		if idx in ('none', None, ''):
@@ -373,11 +373,11 @@ class Menu(Widget):
 					return -1
 				_, py, _, _ = self._screenRect()
 				return _cellY(y) - py - self._border()
-			for i, item in enumerate(self._items):
+			for i, item in enumerate(self._menuItems):
 				if item.get('label') == idx:
 					return i
 			# tkinter also accepts a glob-style pattern; use prefix match
-			for i, item in enumerate(self._items):
+			for i, item in enumerate(self._menuItems):
 				if str(item.get('label', '')).startswith(idx):
 					return i
 		return -1
@@ -387,19 +387,19 @@ class Menu(Widget):
 	# ------------------------------------------------------------------
 
 	def _selectable(self, i) -> bool:
-		if not (0 <= i < len(self._items)):
+		if not (0 <= i < len(self._menuItems)):
 			return False
-		item = self._items[i]
+		item = self._menuItems[i]
 		return item['type'] != 'separator' and item.get('state', 'normal') != 'disabled'
 
 	def _firstSelectable(self) -> int:
-		for i in range(len(self._items)):
+		for i in range(len(self._menuItems)):
 			if self._selectable(i):
 				return i
 		return -1
 
 	def _step(self, current: int, delta: int) -> int:
-		n = len(self._items)
+		n = len(self._menuItems)
 		if n == 0:
 			return -1
 		i = current
@@ -455,7 +455,7 @@ class Menu(Widget):
 		afg = self._opts.get('activeforeground') or ''
 		abg = self._opts.get('activebackground') or ''
 
-		for i, item in enumerate(self._items):
+		for i, item in enumerate(self._menuItems):
 			iy    = py + bd + i
 			ix    = px + bd
 			itype = item['type']
@@ -511,13 +511,13 @@ class Menu(Widget):
 		elif key == KEY_HOME:
 			self._active = self._firstSelectable()
 		elif key == KEY_END:
-			self._active = self._step(len(self._items), -1)
+			self._active = self._step(len(self._menuItems), -1)
 		elif key in (KEY_ENTER, KEY_CR, KEY_SPACE):
 			if self._selectable(self._active):
 				self.invoke(self._active)
 		elif key == KEY_RIGHT:
 			if self._selectable(self._active) and \
-					self._items[self._active]['type'] == 'cascade':
+					self._menuItems[self._active]['type'] == 'cascade':
 				self._openCascade(self._active)
 			elif self._inMenuBarChain() and app is not None:
 				app._menuBarStep(+1)
@@ -545,7 +545,7 @@ class Menu(Widget):
 	def _selectByLetter(self, ch):
 		"""Activate the item whose underlined (or first) letter is *ch*."""
 		matches = []
-		for i, item in enumerate(self._items):
+		for i, item in enumerate(self._menuItems):
 			if not self._selectable(i):
 				continue
 			label = str(item.get('label', ''))
@@ -576,13 +576,13 @@ class Menu(Widget):
 			return True
 
 		row = my - py - bd
-		if not (0 <= row < len(self._items)) or not (px + bd <= mx < px + mw - bd):
+		if not (0 <= row < len(self._menuItems)) or not (px + bd <= mx < px + mw - bd):
 			return True
 		if self._selectable(row):
 			self._active = row
 		self._markDirty()
 
-		item	= self._items[row]
+		item	= self._menuItems[row]
 		press	= bool(bstate & B1_PRESS) and not (bstate & MOTION)
 		release	= bool(bstate & (B1_RELEASE | B1_CLICK | B1_DCLICK))
 		if not self._selectable(row):
@@ -656,7 +656,7 @@ class OptionMenu(Widget):
 
 	@property
 	def _values(self):
-		return [str(it.get('label', '')) for it in self._menu._items
+		return [str(it.get('label', '')) for it in self._menu._menuItems
 			if it['type'] != 'separator']
 
 	# ------------------------------------------------------------------
@@ -717,7 +717,7 @@ class OptionMenu(Widget):
 		if app is not None and openY + menuH > app._height:
 			openY = max(0, self._y - menuH)
 		cur = self._getCurrentLabel()
-		for i, it in enumerate(self._menu._items):
+		for i, it in enumerate(self._menu._menuItems):
 			if str(it.get('label', '')) == cur:
 				self._menu._active = i
 		self._menu._post(self._x, openY)
@@ -725,7 +725,7 @@ class OptionMenu(Widget):
 
 	def _stepValue(self, delta: int):
 		"""Cycle through values without opening menu."""
-		items = [it for it in self._menu._items
+		items = [it for it in self._menu._menuItems
 			if it['type'] != 'separator' and it.get('state') != 'disabled']
 		if not items:
 			return

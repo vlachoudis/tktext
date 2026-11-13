@@ -220,9 +220,9 @@ class Variable:
 	def trace_vinfo(self):
 		return self.trace_info()
 
-	traceAdd	= trace_add
-	traceRemove	= trace_remove
-	traceInfo	= trace_info
+	traceAdd    = trace_add
+	traceRemove = trace_remove
+	traceInfo   = trace_info
 
 	def __str__(self):
 		return self._name
@@ -375,9 +375,9 @@ class CallWrapper:
 	application can replace it (e.g. to report exceptions its own way)."""
 
 	def __init__(self, func, subst, widget):
-		self.func	= func
-		self.subst	= subst
-		self.widget	= widget
+		self.func   = func
+		self.subst  = subst
+		self.widget = widget
 
 	def __call__(self, *args):
 		if self.subst:
@@ -387,25 +387,25 @@ class CallWrapper:
 
 class EventType(str, _enum.Enum):
 	"""Event types; compare equal to Event.type strings."""
-	KeyPress	= 'KeyPress'
-	Key		= 'KeyPress'
-	KeyRelease	= 'KeyRelease'
-	ButtonPress	= 'ButtonPress'
-	Button		= 'ButtonPress'
-	ButtonRelease	= 'ButtonRelease'
-	Motion		= 'Motion'
-	Enter		= 'Enter'
-	Leave		= 'Leave'
-	FocusIn		= 'FocusIn'
-	FocusOut	= 'FocusOut'
-	Expose		= 'Expose'
-	Visibility	= 'Visibility'
-	Destroy		= 'Destroy'
-	Unmap		= 'Unmap'
-	Map		= 'Map'
-	Configure	= 'Configure'
-	MouseWheel	= 'MouseWheel'
-	VirtualEvent	= 'VirtualEvent'
+	KeyPress        = 'KeyPress'
+	Key             = 'KeyPress'
+	KeyRelease      = 'KeyRelease'
+	ButtonPress     = 'ButtonPress'
+	Button          = 'ButtonPress'
+	ButtonRelease   = 'ButtonRelease'
+	Motion          = 'Motion'
+	Enter           = 'Enter'
+	Leave           = 'Leave'
+	FocusIn         = 'FocusIn'
+	FocusOut        = 'FocusOut'
+	Expose          = 'Expose'
+	Visibility      = 'Visibility'
+	Destroy         = 'Destroy'
+	Unmap           = 'Unmap'
+	Map             = 'Map'
+	Configure       = 'Configure'
+	MouseWheel      = 'MouseWheel'
+	VirtualEvent    = 'VirtualEvent'
 
 	def __str__(self):
 		return self.value
@@ -486,8 +486,8 @@ def install(block=(), colors='terminal'):
 		dnd, simpledialog, constants
 	this = _sys.modules[__name__]
 	core = _types.ModuleType('_tkinter')
-	core.TclError	= TclError
-	core.TK_VERSION	= core.TCL_VERSION = '8.6'
+	core.TclError   = TclError
+	core.TK_VERSION = core.TCL_VERSION = '8.6'
 	core.READABLE, core.WRITABLE, core.EXCEPTION = READABLE, WRITABLE, EXCEPTION
 	modules = {
 		'tkinter':		this,

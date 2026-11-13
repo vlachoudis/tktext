@@ -11,6 +11,7 @@
 # Date:   12-Nov-2026
 
 import re
+import bisect
 import curses
 
 from ._core import TclError, Widget, _addStr, _fillRect, _drawBorder, _int, \
@@ -25,6 +26,10 @@ from ._events import (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT,
 	isPrintableKey)
 
 # Shift+key → plain movement key mapping
+# Name of the selection anchor mark returned by ::tk::TextAnchor (text.tcl);
+# setting/unsetting it moves the anchor used by Shift-selection.
+ANCHOR_MARK = 'tk::anchor1'
+
 _SHIFT_MAP = {
 	KEY_SHIFT_UP:    KEY_UP,
 	KEY_SHIFT_DOWN:  KEY_DOWN,
@@ -686,6 +691,8 @@ class Text(_ScrollMixin, Widget):
 		self._gravity.setdefault(name, 'right')
 		if name == 'insert':
 			self._wantCol = None
+		elif name == ANCHOR_MARK:
+			self._selAnchor = pos
 		self._markDirty()
 
 	def markUnset(self, *names):
@@ -693,6 +700,8 @@ class Text(_ScrollMixin, Widget):
 			if n not in ('insert', 'current'):
 				self._marks.pop(n, None)
 				self._gravity.pop(n, None)
+				if n == ANCHOR_MARK:
+					self._selAnchor = None
 
 	def markNames(self):
 		return tuple(self._marks.keys())
@@ -986,13 +995,189 @@ class Text(_ScrollMixin, Widget):
 				return p
 		return pos
 
+	# ------------------------------------------------------------------
+	# Tab stops (options tabs= and tabstyle=), like Tk:
+	#   - tabs is a list of distances, each optionally followed by its
+	#     alignment (left, right, center, numeric);
+	#   - beyond the last stop the stops repeat with the distance of the
+	#     last two (or of the single stop); no tabs = every 8 cells;
+	#   - tabstyle tabular: the n-th tab of a display line uses the n-th
+	#     stop; wordprocessor: the first stop right of the text;
+	#   - a tab is always at least one space wide.
+	# ------------------------------------------------------------------
+
+	_TAB_ALIGN = {'l': 'left', 'r': 'right', 'c': 'center', 'n': 'numeric'}
+
+	def _tabKey(self):
+		return (repr(self._opts.get('tabs')), str(self._opts.get('tabstyle')),
+			_core.PX)
+
+	def _tabStops(self):
+		"""Return ([(cell, align), …], increment, wordprocessor)."""
+		key = self._tabKey()
+		if getattr(self, '_tabCacheKey', None) == key:
+			return self._tabCache
+		tabs = self._opts.get('tabs') or ()
+		if isinstance(tabs, str):
+			tabs = tabs.split()
+		stops = []
+		for tok in tabs:
+			s = str(tok).strip().lower()
+			if not s:
+				continue
+			if s[0] in self._TAB_ALIGN and s.isalpha():
+				if not stops:
+					raise TclError(f'bad tab stop "{tok}"')
+				stops[-1] = (stops[-1][0], self._TAB_ALIGN[s[0]])
+				continue
+			stops.append((_core._cellsX(tok), 'left'))
+		inc = 8
+		if len(stops) >= 2:
+			inc = stops[-1][0] - stops[-2][0]
+		elif stops:
+			inc = stops[0][0]
+		wordproc = str(self._opts.get('tabstyle')).startswith('w')
+		self._tabCacheKey = key
+		self._tabCache    = (stops, max(1, inc), wordproc)
+		return self._tabCache
+
+	def _tabStop(self, n, x):
+		"""(cell, align) of the n-th tab of a display line found at x."""
+		stops, inc, wordproc = self._tabStops()
+		if not stops:
+			return ((x // inc + 1) * inc, 'left')
+
+		def nth(k):
+			if k < len(stops):
+				return stops[k]
+			s, a = stops[-1]
+			return (s + (k - len(stops) + 1) * inc, a)
+
+		if not wordproc:
+			return nth(n)
+		k = 0
+		while True:
+			s, a = nth(k)
+			if s > x:
+				return (s, a)
+			k += 1
+
+	def _segXs(self, r, start, end):
+		"""Display x (relative to the segment) of every column of the
+		display segment (r, start, end), end included; None when the
+		segment has no tab (then x = visible columns before it)."""
+		line = self._buf[r]
+		if '\t' not in line[start:end]:
+			return None
+		ekey = self._elideKey()
+		key  = (self._version, ekey, self._tabKey())
+		if getattr(self, '_xsCacheKey', None) != key:
+			self._xsCacheKey = key
+			self._xsCache    = {}
+		xs = self._xsCache.get((r, start, end))
+		if xs is not None:
+			return xs
+		rng  = self._elideMap().get(r) if ekey else None
+		hide = (lambda c: any(lo <= c < hi for lo, hi in rng)) if rng \
+			else (lambda c: False)
+		xs   = [0] * (end - start + 1)
+		x    = 0
+		ntab = 0
+		for k, c in enumerate(range(start, end)):
+			xs[k] = x
+			if hide(c):
+				continue
+			if line[c] != '\t':
+				x += 1
+				continue
+			stop, align = self._tabStop(ntab, x)
+			ntab += 1
+			if align != 'left':
+				# width of the text that follows, up to the next tab
+				w   = 0
+				dot = None
+				for j in range(c + 1, len(line)):
+					ch = line[j]
+					if ch == '\t':
+						break
+					if hide(j):
+						continue
+					if ch == '.' and dot is None:
+						dot = w
+					w += 1
+				if align == 'right':
+					stop -= w
+				elif align == 'center':
+					stop -= w // 2
+				else:			# numeric: align on the decimal point
+					stop -= w if dot is None else dot
+			x += max(1, stop - x)
+		xs[-1] = x
+		if len(self._xsCache) > 4096:
+			self._xsCache.clear()
+		self._xsCache[(r, start, end)] = xs
+		return xs
+
+	def _segX(self, seg, c) -> int:
+		"""Display x of column c inside the display segment seg."""
+		r, start, end = seg
+		c  = max(start, min(c, end))
+		xs = self._segXs(r, start, end)
+		if xs is not None:
+			return xs[c - start]
+		if r in self._elideMap():
+			return len(self._visibleCols(r, start, c))
+		return c - start
+
+	def _segCol(self, seg, dx) -> int:
+		"""Column of the display segment seg shown at display x dx."""
+		r, start, end = seg
+		xs = self._segXs(r, start, end)
+		if xs is not None:
+			k = bisect.bisect_right(xs, max(0, dx)) - 1
+			return start + max(0, min(k, end - start))
+		if r in self._elideMap():
+			cols = list(self._visibleCols(r, start, end))
+			return cols[dx] if 0 <= dx < len(cols) else end
+		return start + max(0, dx)
+
+	def _segWidth(self, seg) -> int:
+		xs = self._segXs(*seg)
+		return xs[-1] if xs is not None else seg[2] - seg[1]
+
+	def _wrapTabRow(self, r, width, mode, segs):
+		"""Wrap row r, which contains tabs, into display segments."""
+		line = self._buf[r]
+		n    = len(line)
+		s    = 0
+		while True:
+			if mode == 'none':
+				segs.append((r, s, n))
+				return
+			xs = self._segXs(r, s, n)
+			if xs is None:		# no more tabs
+				xs = list(range(n - s + 1))
+			if xs[-1] <= width:
+				segs.append((r, s, n))
+				return
+			# longest prefix that fits (at least one character)
+			e = s + max(1, bisect.bisect_right(xs, width) - 1)
+			if mode == 'word':
+				brk = line.rfind(' ', s, e + 1)
+				if brk > s:
+					e = brk + 1
+			segs.append((r, s, e))
+			s = e
+			if s >= n:
+				return
+
 	def _displayLines(self, width=None):
 		"""Return list of (row, start, end) display segments."""
 		if width is None:
 			width = self._textW()
 		mode = self._wrapMode()
 		ekey = self._elideKey()
-		key  = (width, mode, self._version, ekey)
+		key  = (width, mode, self._version, ekey, self._tabKey())
 		cached = self._dlCache.get(key)
 		if cached is not None:
 			return cached
@@ -1000,6 +1185,9 @@ class Text(_ScrollMixin, Widget):
 		segs = []
 		for r, line in enumerate(self._buf):
 			if emap and self._rowHidden(r, emap):
+				continue
+			if '\t' in line:
+				self._wrapTabRow(r, width, mode, segs)
 				continue
 			if mode == 'none' or len(line) <= width:
 				segs.append((r, 0, len(line)))
@@ -1046,11 +1234,8 @@ class Text(_ScrollMixin, Widget):
 		i    = self._segIndex(pos, segs)
 		if not (self._scrollY <= i < self._scrollY + self._visRows()):
 			return None
-		r, start, _ = segs[i]
 		bd = self._border()
-		x  = pos[1] - start
-		if r in self._elideMap():
-			x = len(self._visibleCols(r, start, pos[1]))
+		x  = self._segX(segs[i], pos[1])
 		if self._wrapMode() == 'none':
 			x -= self._scrollX
 		if not (0 <= x < self._textW()) and not (x == self._textW() and
@@ -1067,10 +1252,7 @@ class Text(_ScrollMixin, Widget):
 		dx   = max(0, x - bd)
 		if self._wrapMode() == 'none':
 			dx += self._scrollX
-		c = start + dx
-		if r in self._elideMap():
-			cols = list(self._visibleCols(r, start, end))
-			c = cols[dx] if dx < len(cols) else end
+		c = self._segCol(segs[i], dx)
 		last = i + 1 >= len(segs) or segs[i + 1][0] != r
 		c = min(c, end if last else max(start, end - 1))
 		return (r, c)
@@ -1087,7 +1269,7 @@ class Text(_ScrollMixin, Widget):
 			self._scrollY = i - visH + 1
 		if self._wrapMode() == 'none':
 			visW = self._textW()
-			c    = pos[1]
+			c    = self._segX(segs[i], pos[1])
 			if c < self._scrollX:
 				self._scrollX = c
 			elif c >= self._scrollX + visW:
@@ -1103,7 +1285,8 @@ class Text(_ScrollMixin, Widget):
 		return self._segIndex(self._parseIndex(idx))
 
 	def xview(self, *args):
-		maxLen = max((len(l) for l in self._buf), default=0)
+		maxLen = max((self._segWidth((r, 0, len(l))) if '\t' in l else len(l)
+			for r, l in enumerate(self._buf)), default=0)
 		visW   = self._textW()
 		if not args:
 			if maxLen <= 0 or self._wrapMode() != 'none':
@@ -1120,18 +1303,21 @@ class Text(_ScrollMixin, Widget):
 		self._markDirty()
 		return None
 
+	# Internal callers use Text.xview(): applications override xview()
+	# (e.g. to close a popup when the view scrolls), and tkinter's
+	# xview_moveto()/redraws never go through the Python method.
 	def xview_moveto(self, fraction):
-		self.xview('moveto', fraction)
+		Text.xview(self, 'moveto', fraction)
 
 	def xview_scroll(self, number, what):
-		self.xview('scroll', number, what)
+		Text.xview(self, 'scroll', number, what)
 
 	def _preRender(self):
 		self._clampScroll()
 		self._notifyYScroll()
 		cmd = self._opts.get('xscrollcommand')
 		if callable(cmd):
-			frac = self.xview()
+			frac = Text.xview(self)
 			if getattr(self, '_lastXScroll', None) != frac:
 				self._lastXScroll = frac
 				cmd(*frac)
@@ -1209,6 +1395,11 @@ class Text(_ScrollMixin, Widget):
 			if si >= len(segs):
 				break
 			r, start, end = segs[si]
+			xs = self._segXs(r, start, end)
+			if xs is not None:
+				self._renderTabSeg(scr, i, bd, segs[si], xs, sx, visW,
+					styles, (baseFg, baseBg, 0), cellAttr)
+				continue
 			if r in emap:
 				cols  = list(self._visibleCols(r, start, end))[sx:sx + visW]
 				line  = self._buf[r]
@@ -1264,6 +1455,43 @@ class Text(_ScrollMixin, Widget):
 			self._drawInternalBar(scr, self._x + self._width - bd - 1,
 				self._y + bd, visH, attr)
 
+	def _renderTabSeg(self, scr, i, bd, seg, xs, sx, visW, styles, base,
+			cellAttr):
+		"""Draw display segment seg containing tabs (xs = its layout)."""
+		r, start, end = seg
+		line  = self._buf[r]
+		n     = len(line)
+		# style of every buffer column of the segment (+ its newline)
+		hasNl = end == n
+		ncol  = end - start + (1 if hasNl else 0)
+		style = [base] * ncol
+		for name, (tfg, tbg, tflags) in styles:
+			for a, b in self._tagRanges.get(name, []):
+				if b[0] < r or a[0] > r:
+					continue
+				lo = max(a[1] if a[0] == r else 0, start) - start
+				hi = min(b[1] if b[0] == r else n + 1, start + ncol) - start
+				for k in range(lo, hi):
+					fg, bg, fl = style[k]
+					style[k] = (tfg or fg, tbg or bg, fl | tflags)
+		chars = []
+		cells = []
+		for k in range(end - start):
+			w = xs[k + 1] - xs[k]
+			if w <= 0:
+				continue
+			ch = line[start + k]
+			chars.append(' ' * w if ch == '\t' else ch)
+			cells.extend([style[k]] * w)
+		text  = ''.join(chars)[sx:sx + visW]
+		cells = cells[sx:sx + visW]
+		self._drawCells(scr, i, bd, text, cells, cellAttr)
+		# selection covering the newline: show one highlighted cell
+		if hasNl and len(text) < visW and style[-1] != base and \
+				any(a <= (r, n) < b for a, b in self._tagRanges.get('sel', ())):
+			_addStr(scr, self._y + bd + i, self._x + bd + len(text), ' ',
+				cellAttr(self._tagStyle('sel')))
+
 	def _drawCells(self, scr, i, bd, text, cells, cellAttr):
 		y = self._y + bd + i
 		x = self._x + bd
@@ -1288,12 +1516,13 @@ class Text(_ScrollMixin, Widget):
 	def _moveVertical(self, pos, delta):
 		segs = self._displayLines()
 		i    = self._segIndex(pos, segs)
-		col  = self._wantCol if self._wantCol is not None else pos[1] - segs[i][1]
+		col  = self._wantCol if self._wantCol is not None else \
+			self._segX(segs[i], pos[1])
 		self._wantCol = col
 		j = max(0, min(i + delta, len(segs) - 1))
 		r, start, end = segs[j]
 		last = j + 1 >= len(segs) or segs[j + 1][0] != r
-		c = start + col
+		c = self._segCol(segs[j], col)
 		c = min(c, end if last else max(start, end - 1))
 		return (r, c)
 
@@ -1428,6 +1657,16 @@ class Text(_ScrollMixin, Widget):
 	# Mouse input
 	# ------------------------------------------------------------------
 
+	def _posAtScreen(self, mx, my):
+		"""Text position under screen cell (mx, my), clamped to the view."""
+		bd = self._border()
+		x  = max(bd, min(mx - self._x, self._width - bd - 1))
+		y  = max(bd, min(my - self._y, self._height - bd - 1))
+		return self._posFromXY(x, y)
+
+	def _pointerAt(self, mx, my):
+		self._marks['current'] = self._posAtScreen(mx, my)
+
 	def _fireTagBindings(self, pos, mx, my, bstate):
 		if not self._tagBinds:
 			return
@@ -1480,9 +1719,7 @@ class Text(_ScrollMixin, Widget):
 			elif my >= self._y + bd + visH:
 				self._scrollY += 1
 			self._clampScroll()
-		x   = max(bd, min(mx - self._x, self._width - bd - 1))
-		y   = max(bd, min(my - self._y, self._height - bd - 1))
-		pos = self._posFromXY(x, y)
+		pos = self._posAtScreen(mx, my)
 		self._marks['current'] = pos
 
 		if not (press or release or motion or bstate & B1_DCLICK):

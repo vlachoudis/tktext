@@ -18,6 +18,7 @@ from ._events import KEY_LEFT, KEY_RIGHT, B1_PRESS, B1_CLICK, MOTION
 
 class Notebook(Widget):
 	"""Tabbed container widget.  Mirrors ttk.Notebook."""
+	_rendersChildren = True
 
 	def __init__(self, parent=None, cnf=None, **kwargs):
 		parent, kwargs = _initArgs(parent, cnf, kwargs)
@@ -288,7 +289,7 @@ class Notebook(Widget):
 		# Active tab content
 		w = self._selectedWidget()
 		if w is not None and w._isMapped():
-			w.render(scr)
+			w._renderWithSlaves(scr)
 
 	def _renderChildren(self, scr):
 		# Children are rendered by render() directly; suppress default walk

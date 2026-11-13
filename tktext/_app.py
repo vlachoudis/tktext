@@ -827,6 +827,11 @@ class Tk(Wm, Frame):
 			if target._isFocusable() and (target._clickFocus or _core.PX == 1):
 				self._setFocus(target)
 
+		if not dragging:
+			# Tk re-picks the 'current' item/mark before delivering a
+			# press or a motion without buttons held
+			target._pointerAt(mx, my)
+
 		evt	= _newMouseEvent(target, mx, my, bstate)
 		broken	= False
 		for alts in _mouseEventNames(bstate, dragging):
@@ -881,12 +886,12 @@ class Tk(Wm, Frame):
 		bar = self._menuBar
 		if bar is None:
 			return []
-		return [i for i, it in enumerate(bar._items)
+		return [i for i, it in enumerate(bar._menuItems)
 			if it['type'] == 'cascade' and it.get('menu') is not None
 			and it.get('state', 'normal') != 'disabled']
 
 	def _openMenuBar(self, idx):
-		"""Open the cascade of menubar item *idx* (index into _items)."""
+		"""Open the cascade of menubar item *idx* (index into _menuItems)."""
 		bar = self._menuBar
 		if bar is None:
 			return
@@ -901,7 +906,7 @@ class Tk(Wm, Frame):
 		for x0, _, i in self._menuBarPos:
 			if i == idx:
 				x = x0
-		sub = bar._items[idx]['menu']
+		sub = bar._menuItems[idx]['menu']
 		sub._fromMenuBar = True
 		sub._post(x, 1)
 		self._menuBarActive = idx
@@ -921,7 +926,7 @@ class Tk(Wm, Frame):
 		if bar is None:
 			return
 		x = 0
-		for i, item in enumerate(bar._items):
+		for i, item in enumerate(bar._menuItems):
 			if item['type'] == 'separator':
 				continue
 			label = f' {item.get("label", "")} '
@@ -1069,7 +1074,7 @@ class Tk(Wm, Frame):
 			self._computeMenuBarPos()
 			bar = self._menuBar
 			for x0, x1, idx in self._menuBarPos:
-				item  = bar._items[idx]
+				item  = bar._menuItems[idx]
 				label = f' {item.get("label", "")} '
 				a     = barAttr
 				if item.get('state', 'normal') == 'disabled':

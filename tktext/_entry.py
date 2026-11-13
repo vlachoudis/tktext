@@ -218,10 +218,10 @@ class Entry(Widget):
 		return None
 
 	def xview_moveto(self, fraction):
-		self.xview('moveto', fraction)
+		Entry.xview(self, 'moveto', fraction)
 
 	def xview_scroll(self, number, what):
-		self.xview('scroll', number, what)
+		Entry.xview(self, 'scroll', number, what)
 
 	# ------------------------------------------------------------------
 	# Preferred size / cursor position
@@ -309,7 +309,7 @@ class Entry(Widget):
 		self._scrollToCursor()
 		cmd = self._opts.get('xscrollcommand')
 		if callable(cmd):
-			first, last = self.xview()
+			first, last = Entry.xview(self)
 			if self._lastXScroll != (first, last):
 				self._lastXScroll = (first, last)
 				cmd(first, last)
