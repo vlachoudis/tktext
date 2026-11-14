@@ -53,7 +53,7 @@ from ._combobox    import Combobox
 from ._scrollbar   import Scrollbar
 from ._misc        import Separator, Progressbar
 from ._events      import Event
-from ._colors      import setTheme, resetTheme, getTheme, getBackground, isDefaultColor
+from ._colors      import setTheme, resetTheme, getTheme, isDefaultColor
 from ._termbg      import terminalBackground, isDarkTerminal
 from . import ttk
 
@@ -321,7 +321,7 @@ __all__ = [
 	'Scale', 'Spinbox', 'Notebook', 'Combobox', 'Scrollbar', 'Separator',
 	'Progressbar', 'Event', 'TclError', 'ttk',
 	# Colour theme (tktext only)
-	'setTheme', 'resetTheme', 'getTheme', 'terminalBackground', 'isDarkTerminal',
+	'setTheme', 'resetTheme', 'getTheme', 'isDefaultColor', 'terminalBackground', 'isDarkTerminal',
 	# Variables
 	'Variable', 'StringVar', 'IntVar', 'DoubleVar', 'BooleanVar',
 	# Direction / fill constants
