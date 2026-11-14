@@ -113,7 +113,7 @@ class Button(Widget):
 			icon = self._withImage(text)
 			# a large icon box has its own side lines
 			return icon if '\n' in icon else f'[{icon}]'
-		glyph = self._imageGlyph() if self._opts.get('image') else ''
+		glyph = self._compoundGlyph() if self._opts.get('image') else ''
 		comp  = str(self._opts.get('compound') or 'none')
 		if glyph and comp in ('left', 'top'):
 			return f'[{glyph} {text}]'

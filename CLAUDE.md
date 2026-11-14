@@ -258,6 +258,8 @@ Class bindings (`bind_class`) fire after the widget's own bindings and before
 `_handleKey`; keys matching `event_add()` sequences fire the virtual event when bound.
 Widget generated virtual events (`<<ListboxSelect>>`, `<<NotebookTabChanged>>` …) are
 **queued** like in Tk and delivered by the event loop (`root.update()` in tests).
+`focus_set()` likewise only queues `<FocusIn>`/`<FocusOut>` (the focus itself changes at
+once), so focus bindings never run re-entrantly inside the caller.
 `<Configure>`, `<Map>`, `<Unmap>`, `<Destroy>`, `<Enter>`, `<Leave>` are generated.
 
 Every callback goes through `tktext.CallWrapper` (`_core._callback`); applications may

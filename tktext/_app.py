@@ -612,13 +612,13 @@ class Tk(Wm, Frame):
 		if old is not None:
 			old._focused = False
 			old._focusChanged(False)
-			old._dispatch('<FocusOut>', _FocusEvent(old, 'FocusOut'))
+			self._eventQueue.append((old, '<FocusOut>', _FocusEvent(old, 'FocusOut')))
 		if widget is not None:
 			widget._focused = True
 			top = widget.winfo_toplevel()
 			top._lastFocus = widget
 			widget._focusChanged(True)
-			widget._dispatch('<FocusIn>', _FocusEvent(widget, 'FocusIn'))
+			self._eventQueue.append((widget, '<FocusIn>', _FocusEvent(widget, 'FocusIn')))
 		self._dirty = True
 
 	def _focusWindow(self):
@@ -1311,7 +1311,9 @@ class Tk(Wm, Frame):
 		]
 
 	def _fireQueuedEvents(self):
-		"""Deliver queued virtual events (in order, new ones included)."""
+		"""Deliver queued virtual and focus events (in order, new ones
+		included).  Like Tk, focus_set() only queues <FocusIn>/<FocusOut>,
+		so their bindings never run inside the caller."""
 		count = 0
 		while self._eventQueue and count < 1000:
 			widget, name, evt = self._eventQueue.pop(0)
@@ -1319,7 +1321,10 @@ class Tk(Wm, Frame):
 			if widget._destroyed:
 				continue
 			try:
-				widget._dispatchVirtual(name, evt)
+				if name in ('<FocusIn>', '<FocusOut>'):
+					widget._dispatch(name, evt)
+				else:
+					widget._dispatchVirtual(name, evt)
 			except Exception:
 				self._reportException()
 			self._dirty = True

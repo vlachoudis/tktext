@@ -1742,8 +1742,8 @@ class Widget:
 				alt = getattr(img, 'alt', '')
 				return f' {alt} ' if alt else IMAGE_GLYPH
 			return ' '
-		comp = str(self._opts.get('compound') or 'none')
-		glyph = self._imageGlyph()
+		comp  = str(self._opts.get('compound') or 'none')
+		glyph = self._compoundGlyph()
 		if glyph:
 			if comp in ('left', 'top'):
 				return f'{glyph} {text}'
@@ -1799,6 +1799,17 @@ class Widget:
 		if img is None:
 			img = self._opts.get('image')
 		return str(getattr(img, 'glyph', '') or '')
+
+	def _compoundGlyph(self) -> str:
+		"""Glyph shown next to the text of a compound image: its own glyph,
+		or in pixel mode the NO_GLYPH placeholder ('' if none)"""
+		glyph = self._imageGlyph()
+		if glyph or PX == 1:
+			return glyph
+		if str(self._opts.get('compound') or 'none') in ('left', 'top', 'right', 'bottom'):
+			from ._image import NO_GLYPH
+			return NO_GLYPH
+		return ''
 
 	def _labelledByNeighbour(self) -> bool:
 		"""An icon followed (same grid row, next column, or the next

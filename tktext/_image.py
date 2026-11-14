@@ -260,6 +260,10 @@ class BitmapImage(Image):
 # Glyph drawn for a widget that shows an image but no text
 IMAGE_GLYPH = '▪'
 
+# Glyph of a compound image without its own glyph: keeps the text aligned
+# with the icons that have one
+NO_GLYPH = '·'
+
 
 def _imageText(text, image, compound):
 	"""Return the string a label/button should display for text+image.

@@ -237,6 +237,54 @@ class MouseTest(unittest.TestCase):
 		self.assertEqual(p[2:], ['Control-', 'Shift-'])
 
 
+class FocusEventTest(unittest.TestCase):
+
+	def test_focus_events_are_queued(self):
+		root, scr = makeApp()
+		a = tk.Entry(root)
+		b = tk.Entry(root)
+		a.pack()
+		b.pack()
+		attach(root)
+		a.focus_set()
+		root.update()
+		seen = []
+		a.bind('<FocusOut>', lambda ev: seen.append('out'))
+		b.bind('<FocusIn>',  lambda ev: seen.append('in'))
+		b.focus_set()
+		self.assertEqual(seen, [])
+		self.assertIs(root.focus_get(), b)
+		root.update()
+		self.assertEqual(seen, ['out', 'in'])
+
+	def test_focusout_destroying_popup_is_not_reentrant(self):
+		# flair PopupListbox.destroy(): focus_set() of the previous widget
+		# must not run the popup's <FocusOut> (which destroys it again)
+		root, scr = makeApp()
+		e = tk.Entry(root)
+		e.pack()
+		attach(root)
+		e.focus_set()
+		shown = {}
+
+		def destroy(event=None):
+			if shown.get('top') is not None:
+				e.focus_set()
+				tk.Toplevel.destroy(shown['top'])
+				shown['top'] = None
+		top = tk.Toplevel(root)
+		lb  = tk.Listbox(top)
+		lb.pack()
+		lb.bind('<FocusOut>', destroy)
+		shown['top'] = top
+		lb.focus_set()
+		root.update()
+		destroy()
+		root.update()
+		self.assertIsNone(shown['top'])
+		self.assertTrue(top._destroyed)
+
+
 class AppLoopTest(unittest.TestCase):
 
 	def test_after_callback_redraws(self):

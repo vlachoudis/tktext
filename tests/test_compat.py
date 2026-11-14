@@ -245,7 +245,26 @@ class PixelModeTest(unittest.TestCase):
 		attach(root)
 		self.assertIsNotNone(scr.find('[OK]'))
 		self.assertIsNotNone(scr.find('[▪]'))
-		self.assertIsNotNone(scr.find(' Tab'))
+		self.assertIsNotNone(scr.find('· Tab'))
+
+	def test_compound_placeholder_glyph_aligns(self):
+		root, scr = makeApp(40, 12)
+		plain = tk.PhotoImage(width=16, height=16)
+		cut   = tk.PhotoImage(width=16, height=16)
+		empty = tk.PhotoImage(width=16, height=16)
+		cut.glyph   = '✂'
+		empty.glyph = ' '
+		for img, text in ((plain, 'Cut'), (cut, 'Copy'), (empty, 'Blank')):
+			tk.Label(root, text=text, image=img, compound='left',
+					anchor='w').pack(fill='x')
+		tk.Button(root, text='Go', image=plain, compound='left').pack()
+		attach(root)
+		self.assertIsNotNone(scr.find('· Cut'))
+		self.assertIsNotNone(scr.find('✂ Copy'))
+		self.assertIsNotNone(scr.find('  Blank'))
+		self.assertIsNotNone(scr.find('[· Go]'))
+		self.assertEqual(scr.find('Cut')[1], scr.find('Copy')[1])
+		self.assertEqual(scr.find('Cut')[1], scr.find('Blank')[1])
 
 
 class GeometryOptionsTest(unittest.TestCase):

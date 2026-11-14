@@ -97,7 +97,7 @@ to the default root.
 | `Menu`, `OptionMenu` | Popup, cascade and menubar menus |
 | `Canvas` | Items drawn on the character grid |
 | `PanedWindow` | Draggable sashes |
-| `PhotoImage`, `BitmapImage` | Size only; an icon-only widget shows `image.glyph` if set (an image > 24 px high in pixel mode as a box of its size, at least 5x2 cells: `│ + │`/`│   │`), else (when clickable) `image.alt` (or `▪`); `image.glyph` (default `▾▴◂▸` for `triangle_down`… names) is also drawn beside the text with `compound=left/right` |
+| `PhotoImage`, `BitmapImage` | Size only; an icon-only widget shows `image.glyph` if set (an image > 24 px high in pixel mode as a box of its size, at least 5x2 cells: `│ + │`/`│   │`), else (when clickable) `image.alt` (or `▪`); `image.glyph` (default `▾▴◂▸` for `triangle_down`… names) is also drawn beside the text with `compound=left/right` (in pixel mode an image without a glyph shows `·` there, so the texts stay aligned; `glyph=' '` keeps it blank) |
 
 `tktext.ttk` provides the ttk versions (`ttk.Entry`, `ttk.Treeview`,
 `ttk.Notebook`, `ttk.Style` …).  Variables (`StringVar`, `IntVar`,
