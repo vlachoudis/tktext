@@ -692,10 +692,10 @@ class ImageAltTest(unittest.TestCase):
 			cb.pack()
 			attach(root)
 			text = scr.text()
-			self.assertIsNotNone(scr.find('│ ⤓ │'))	# 32x32: a 5x2 box
-			y, x = scr.find('│ ⤓ │')
-			self.assertIsNotNone(scr.find('│   │'))
-			self.assertEqual(scr.find('│   │'), (y + 1, x))
+			self.assertIsNotNone(scr.find('┌─⤓─┐'))	# 32x32: a 5x2 box
+			y, x = scr.find('┌─⤓─┐')
+			self.assertIsNotNone(scr.find('└───┘'))
+			self.assertEqual(scr.find('└───┘'), (y + 1, x))
 			self.assertIn('△', text)
 			self.assertNotIn('saveflair32', text)
 			self.assertNotIn('TRC', text)

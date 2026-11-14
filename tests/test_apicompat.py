@@ -52,6 +52,17 @@ class ConfigureTest(unittest.TestCase):
 		self.assertEqual(b.cget('repeatdelay'), 300)
 		self.assertEqual(ttk.Button(root, style='X.TButton').cget('style'), 'X.TButton')
 
+	def test_trailing_underscore_options(self):
+		"""tkinter strips a trailing '_' of any option name (to_=)."""
+		root, _ = makeApp()
+		s = tk.Spinbox(root, from_=1, to_=100)
+		self.assertEqual(s.cget('to'), 100)
+		self.assertEqual(s.cget('from'), 1)
+		sc = tk.Scale(root, to_=50)
+		self.assertEqual(sc.cget('to'), 50)
+		with self.assertRaises(tk.TclError):
+			tk.Label(root, nosuch_=1)
+
 	def test_abbreviated_options(self):
 		root, _ = makeApp()
 		f = tk.Frame(root, border=3)

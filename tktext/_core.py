@@ -478,10 +478,15 @@ class Widget:
 		"""Raise TclError for an option unknown to Tk and to the widget,
 		expand abbreviated option names in place."""
 		table = self._tkOptions()
-		if table is None:
-			return
 		for key in list(kwargs):
-			name = self._optionName(key, table)
+			# tkinter strips a trailing '_' of any option (to_=);
+			# tktext keeps its own names from_, class_
+			name = key
+			if key.endswith('_') and key not in self._opts and \
+					key not in self._TK2OPT.values():
+				name = key[:-1]
+			if table is not None:
+				name = self._optionName(name, table)
 			if name != key:
 				kwargs[name] = kwargs.pop(key)
 
@@ -1755,8 +1760,8 @@ class Widget:
 	def _iconBox(self, glyph: str) -> str:
 		"""A small icon is its glyph, padded to two cells; a large one (> 24 px high in
 		pixel mode, e.g. 32x32 ribbon buttons) becomes a box of its size
-		in cells (at least 5x2) with side lines and the glyph centred
-		on the first row:  '│ + │' / '│   │'."""
+		in cells (at least 5x2), a closed box with the glyph centred
+		on the top line:  '┌─+─┐' / '└───┘'."""
 		if PX == 1:
 			return glyph
 		from ._image import _imageByName
@@ -1777,8 +1782,9 @@ class Widget:
 			inner += 1		# keep the glyph centred
 		rows  = max(2, -(-imgH // PY))
 		side  = (inner - len(glyph)) // 2
-		lines = [f'│{" "*side}{glyph}{" "*side}│']
-		lines.extend([f'│{" "*inner}│'] * (rows - 1))
+		lines = [f'┌{"─"*side}{glyph}{"─"*side}┐']
+		lines.extend([f'│{" "*inner}│'] * (rows - 2))
+		lines.append(f'└{"─"*inner}┘')
 		return '\n'.join(lines)
 
 	def _iconFramed(self) -> bool:
