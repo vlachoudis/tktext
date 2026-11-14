@@ -205,6 +205,26 @@ class TreeviewTest(unittest.TestCase):
 		attach(root)
 		self.assertIsNotNone(scr.find('M'))
 
+	def test_wide_glyph_keeps_columns(self):
+		# a double width glyph in a one cell column must not shift the row
+		root, scr = makeApp(30, 8)
+		tv = tk.Treeview(root, columns=('a', 'b'), show='tree', height=3)
+		tv.column('#0', width=6, stretch=False)
+		tv.column('a',  width=1, stretch=False)
+		tv.column('b',  width=4, stretch=False)
+		tv.insert('', 'end', text='run', values=('\u23e9', 'end'))
+		tv.insert('', 'end', text='run', values=('\u23e9\u23e9', 'end'))
+		tv.pack(side=tk.LEFT)
+		attach(root)
+		x   = tv._x + tv._border() + 7
+		row = scr.chars[tv._dataY()]
+		self.assertEqual(row[x:x + 3], list('end'))
+		self.assertEqual(scr.chars[tv._dataY() + 1][x:x + 3], list('end'))
+		# a wide glyph whose second cell was overwritten desyncs the terminal
+		for i, ch in enumerate(row[:-1]):
+			if ch == '\u23e9':
+				self.assertEqual(row[i + 1], '')
+
 	def test_identify_and_heading_command(self):
 		root, scr, tv, d = self._tree()
 		hit = []

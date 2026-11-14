@@ -13,6 +13,7 @@
 import itertools as _itertools
 import curses
 import functools
+import unicodedata
 from . import _colors, _sysclip
 from ._events import Event, KeyEvent, MouseEvent, B1_PRESS, B1_RELEASE, \
 	B1_CLICK, B1_DCLICK, B3_ANY, MOTION, isWheel, keysymOf, \
@@ -42,9 +43,9 @@ def _addStr(scr, y, x, s, attr=0):
 	if y < 0 or y >= sh or x >= sw:
 		return
 	if x < 0:
-		s = s[-x:]
+		s = _skipCells(s, -x)
 		x = 0
-	s = s[:sw - x]
+	s = _clip(s, sw - x)
 	if not s:
 		return
 	try:
@@ -97,26 +98,67 @@ def _drawBorder(scr, y, x, h, w, relief='solid', attr=0):
 		_addStr(scr, y + h - 1, x, bl + hz * max(0, w - 2) + br, attr)
 
 
+@functools.lru_cache(maxsize=4096)
+def _charWidth(c):
+	"""Terminal cells of character c: 2 east asian wide, 0 combining."""
+	if c < '\u0300':
+		return 1
+	if unicodedata.east_asian_width(c) in 'WF':
+		return 2
+	if unicodedata.category(c) in ('Mn', 'Me', 'Cf'):
+		return 0
+	return 1
+
+
+def _strWidth(s):
+	"""Terminal cells occupied by string s."""
+	if s.isascii():
+		return len(s)
+	return sum(map(_charWidth, s))
+
+
 def _clip(s, width):
-	"""Clip string to width characters."""
+	"""Clip string to width terminal cells, a wide character that
+	does not fit is replaced by a space."""
 	if width <= 0:
 		return ''
-	if len(s) > width:
+	if s.isascii():
 		return s[:width]
+	cells = 0
+	for i, c in enumerate(s):
+		w = _charWidth(c)
+		if cells + w > width:
+			return s[:i] + ' ' * (width - cells)
+		cells += w
 	return s
 
 
+def _skipCells(s, n):
+	"""Remove the first n terminal cells of s, a wide character split
+	in half is replaced by a space."""
+	if s.isascii():
+		return s[n:]
+	cells = 0
+	for i, c in enumerate(s):
+		if cells >= n:
+			return ' ' * (cells - n) + s[i:]
+		cells += _charWidth(c)
+	return ' ' * max(0, cells - n)
+
+
 def _pad(s, width, align='left'):
-	"""Pad or clip string to exactly width characters."""
+	"""Pad or clip string to exactly width terminal cells."""
 	if width <= 0:
 		return ''
-	s = _clip(s, width)
+	s    = _clip(s, width)
+	fill = width - _strWidth(s)
+	if fill <= 0:
+		return s
 	if align == 'left':
-		return s.ljust(width)
+		return s.ljust(len(s) + fill)
 	elif align == 'right':
-		return s.rjust(width)
-	else:
-		return s.center(width)
+		return s.rjust(len(s) + fill)
+	return s.center(len(s) + fill)
 
 
 _ANCHOR_MAP = {

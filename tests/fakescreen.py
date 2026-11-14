@@ -11,6 +11,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import tktext as tk		# noqa: E402
+from tktext._core import _charWidth	# noqa: E402
 
 
 class FakeScreen:
@@ -35,14 +36,21 @@ class FakeScreen:
 		if not (0 <= y < self.height and 0 <= x < self.width):
 			raise curses.error('addwstr() returned ERR')
 		for ch in s:
-			if x >= self.width:
+			w = _charWidth(ch)
+			if w == 0:
+				continue
+			if x + w > self.width:
 				x  = 0
 				y += 1
 				if y >= self.height:
 					raise curses.error('addwstr() returned ERR')
+			# a wide character occupies two cells, the second one empty
 			self.chars[y][x] = ch
 			self.attrs[y][x] = attr
-			x += 1
+			if w == 2:
+				self.chars[y][x + 1] = ''
+				self.attrs[y][x + 1] = attr
+			x += w
 		if y == self.height - 1 and x >= self.width:
 			raise curses.error('addwstr() returned ERR')
 

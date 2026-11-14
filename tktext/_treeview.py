@@ -628,7 +628,7 @@ class Treeview(_ScrollMixin, Widget):
 					break
 				align = 'right' if anc in ('e', 'ne', 'se') else \
 					'center' if anc in ('center', 'n', 's') else 'left'
-				cell = _pad(text, max(0, w - 1), align) + ' ' if w > 1 else text[:w]
+				cell = _pad(text, w - 1, align) + ' ' if w > 1 else text
 				_addStr(scr, y, x, _pad(cell, w), a)
 				x += cw
 
