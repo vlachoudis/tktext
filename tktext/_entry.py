@@ -10,7 +10,9 @@
 # Author: Vasilis.Vlachoudis@cern.ch
 # Date:   12-Nov-2026
 
-from ._core import TclError, Widget, _fillRect, _drawBorder, _addStr, _int, _initArgs, _cellX
+from ._core import (TclError, Widget, _fillRect, _drawBorder, _addStr, _int, _initArgs, _cellX,
+	_pxBox, _callback)
+from ._tcl import _splitlist
 from ._events import (KEY_LEFT, KEY_RIGHT, KEY_HOME, KEY_END,
 	KEY_BACKSPACE, KEY_DC, KEY_SHIFT_LEFT, KEY_SHIFT_RIGHT, KEY_SHIFT_HOME,
 	KEY_SHIFT_END, B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, MOTION,
@@ -54,6 +56,9 @@ class Entry(Widget):
 			'disabledforeground':	'',
 			'readonlybackground':	'',
 			'xscrollcommand':	None,
+			'validate':		'none',
+			'validatecommand':	None,
+			'invalidcommand':	None,
 		})
 		kwargs.setdefault('relief', 'sunken')
 		kwargs.setdefault('borderwidth', 1)
@@ -66,6 +71,7 @@ class Entry(Widget):
 		self._selAnchor		= None
 		self._mouseDown		= False
 		self._lastXScroll	= None
+		self._scanX		= None	# scan_mark anchor (x, scrollX)
 
 		if kwargs:
 			Entry.configure(self, **kwargs)
@@ -99,14 +105,15 @@ class Entry(Widget):
 		"""Return current entry contents."""
 		return self._getBuf()
 
-	def insert(self, idx: object, s):
-		"""Insert *s* at position *idx* ('end' or int)."""
+	def insert(self, index: object, string):
+		"""Insert *string* at position *index* ('end' or int)."""
 		if not self._editable():
 			return
-		s   = str(s)
+		s   = str(string)
 		buf = self._getBuf()
-		pos = self._resolveIdx(idx, buf)
-		self._setBuf(buf[:pos] + s + buf[pos:])
+		pos = max(0, min(self._resolveIdx(index, buf), len(buf)))
+		if not self._change(buf[:pos] + s + buf[pos:], 1, pos, s):
+			return
 		if self._cur >= pos:
 			self._cur += len(s)
 		self._clampCur()
@@ -123,7 +130,8 @@ class Entry(Widget):
 		pos2 = max(0, min(pos2, len(buf)))
 		if pos1 > pos2:
 			pos1, pos2 = pos2, pos1
-		self._setBuf(buf[:pos1] + buf[pos2:])
+		if pos1 == pos2 or not self._change(buf[:pos1] + buf[pos2:], 0, pos1, buf[pos1:pos2]):
+			return
 		if self._cur > pos2:
 			self._cur -= pos2 - pos1
 		elif self._cur > pos1:
@@ -132,17 +140,28 @@ class Entry(Widget):
 		self._clampCur()
 		self._scrollToCursor()
 
-	def icursor(self, idx: object):
-		"""Set insertion cursor to *idx*."""
-		self._cur = self._resolveIdx(idx, self._getBuf())
+	def icursor(self, index: object):
+		"""Set insertion cursor to *index*."""
+		self._cur = self._resolveIdx(index, self._getBuf())
 		self._clampCur()
 		self._scrollToCursor()
 		self._markDirty()
 
-	def index(self, idx: object) -> int:
-		"""Return integer index for *idx*."""
+	def index(self, index: object) -> int:
+		"""Return integer index for *index*."""
 		buf = self._getBuf()
-		return max(0, min(self._resolveIdx(idx, buf), len(buf)))
+		return max(0, min(self._resolveIdx(index, buf), len(buf)))
+
+	def bbox(self, index):
+		"""Bounding box (x, y, width, height) of the character at *index*
+		relative to the widget, like Tk."""
+		buf	= self._getBuf()
+		pos	= max(0, min(self._resolveIdx(index, buf), len(buf)))
+		bd	= self._border()
+		col	= max(0, pos - self._scrollX)
+		row	= (self._height - 2*bd - 1) // 2
+		width	= 1 if pos < len(buf) else 0
+		return _pxBox((bd + col, bd + max(0, row), width, 1))
 
 	def selectionRange(self, start, end):
 		"""Select from *start* to *end*."""
@@ -164,23 +183,31 @@ class Entry(Widget):
 		"""Return True if any text is selected."""
 		return self._sel is not None
 
-	def selectionFrom(self, idx):
-		"""Set selection anchor to *idx*."""
-		self._selAnchor = self._resolveIdx(idx, self._getBuf())
+	def selectionFrom(self, index):
+		"""Set selection anchor to *index*."""
+		self._selAnchor = self._resolveIdx(index, self._getBuf())
 
-	def selectionTo(self, idx):
-		"""Extend selection to *idx* from current anchor."""
-		b = self._resolveIdx(idx, self._getBuf())
+	def selectionTo(self, index):
+		"""Extend selection to *index* from current anchor."""
+		b = self._resolveIdx(index, self._getBuf())
 		if self._selAnchor is None:
 			self._selAnchor = b
 		a = self._selAnchor
 		self._sel = (min(a, b), max(a, b)) if a != b else None
 		self._markDirty()
 
-	def selectionAdjust(self, idx):
-		self.selectionTo(idx)
+	def selectionAdjust(self, index):
+		"""Extend the selection end nearest to *index* (Tk select adjust)."""
+		b = self._resolveIdx(index, self._getBuf())
+		if self._sel is not None:
+			s, e = self._sel
+			self._selAnchor = e if abs(b - s) < abs(b - e) else s
+		self.selectionTo(b)
 
-	def selectionGet(self) -> str:
+	def selectionGet(self, **kw) -> str:
+		"""Selected text; selection='CLIPBOARD' reads the clipboard."""
+		if kw.get('selection') == 'CLIPBOARD':
+			return Widget.selection_get(self, **kw)
 		if self._sel is None:
 			return ''
 		return self._getBuf()[self._sel[0]:self._sel[1]]
@@ -196,6 +223,7 @@ class Entry(Widget):
 	selection_to		= selectionTo
 	select_to		= selectionTo
 	selection_adjust	= selectionAdjust
+	select_adjust		= selectionAdjust
 	selection_get		= selectionGet
 
 	def xview(self, *args):
@@ -223,6 +251,85 @@ class Entry(Widget):
 
 	def xview_scroll(self, number, what):
 		Entry.xview(self, 'scroll', number, what)
+
+	def scan_mark(self, x):
+		"""Anchor for scan_dragto at the pixel position *x*."""
+		self._scanX = (_cellX(x), self._scrollX)
+
+	def scan_dragto(self, x):
+		"""Scroll by 10 times the distance from the scan_mark position."""
+		if self._scanX is None:
+			return
+		x0, scroll = self._scanX
+		buf = self._getBuf()
+		self._scrollX = max(0, min(scroll - 10 * (_cellX(x) - x0), len(buf)))
+		self._markDirty()
+
+	# ------------------------------------------------------------------
+	# Validation (validate, validatecommand, invalidcommand)
+	# ------------------------------------------------------------------
+
+	def _change(self, newBuf: str, action: int, pos: int, text: str) -> bool:
+		"""Set the buffer to *newBuf* after the 'key' validation of the
+		edit; return False when the validation rejected it."""
+		if self._opts.get('validate') in ('key', 'all'):
+			if not self._validate('key', action, pos, text, newBuf):
+				return False
+		self._setBuf(newBuf)
+		return True
+
+	def _focusChanged(self, gained):
+		mode = self._opts.get('validate')
+		why  = 'focusin' if gained else 'focusout'
+		if mode in ('focus', 'all', why):
+			buf = self._getBuf()
+			self._validate(why, -1, -1, '', buf)
+
+	def _substitute(self, arg, why, action, pos, text, newBuf):
+		subst = {
+			'%d': str(action),
+			'%i': str(pos),
+			'%P': newBuf,
+			'%s': self._getBuf(),
+			'%S': text,
+			'%v': str(self._opts.get('validate')),
+			'%V': why,
+			'%W': str(self),
+			'%%': '%',
+		}
+		return subst.get(arg, arg)
+
+	def _runCommand(self, cmd, why, action, pos, text, newBuf):
+		"""Run a validate/invalid command: a callable, a registered command
+		name or a tuple/string of the name followed by %-substitutions."""
+		if callable(cmd):
+			return _callback(self, cmd)
+		words = list(cmd) if isinstance(cmd, (tuple, list)) else list(_splitlist(cmd))
+		if not words:
+			return True
+		func = words[0]
+		args = [self._substitute(str(a), why, action, pos, text, newBuf) for a in words[1:]]
+		if callable(func):
+			return _callback(self, func, *args)
+		return self.tk.call(str(func), *args)
+
+	def _validate(self, why, action, pos, text, newBuf) -> bool:
+		"""Tk validation: run validatecommand, invalidcommand when it fails.
+		An error or a non boolean result switches validation off."""
+		cmd = self._opts.get('validatecommand')
+		if not cmd:
+			return True
+		try:
+			result = self._runCommand(cmd, why, action, pos, text, newBuf)
+			ok     = self.tk.getboolean(result if isinstance(result, str) else bool(result))
+		except Exception:
+			self._opts['validate'] = 'none'
+			return True
+		if not ok:
+			inv = self._opts.get('invalidcommand')
+			if inv:
+				self._runCommand(inv, why, action, pos, text, newBuf)
+		return ok
 
 	# ------------------------------------------------------------------
 	# Preferred size / cursor position
@@ -294,7 +401,8 @@ class Entry(Widget):
 			return False
 		s, e = self._sel
 		buf  = self._getBuf()
-		self._setBuf(buf[:s] + buf[e:])
+		if not self._change(buf[:s] + buf[e:], 0, s, buf[s:e]):
+			return False
 		self._cur       = s
 		self._sel       = None
 		self._selAnchor = None
@@ -415,35 +523,38 @@ class Entry(Widget):
 		elif not editable:
 			return False
 		elif key == KEY_BACKSPACE:
-			if self._deleteSelection():
-				c = self._cur
-			elif c > 0:
-				self._setBuf(buf[:c-1] + buf[c:])
+			if self._sel is not None:
+				if self._deleteSelection():
+					c = self._cur
+			elif c > 0 and self._change(buf[:c-1] + buf[c:], 0, c-1, buf[c-1]):
 				c -= 1
 		elif key == KEY_DC:
-			if self._deleteSelection():
-				c = self._cur
+			if self._sel is not None:
+				if self._deleteSelection():
+					c = self._cur
 			elif c < len(buf):
-				self._setBuf(buf[:c] + buf[c+1:])
+				self._change(buf[:c] + buf[c+1:], 0, c, buf[c])
 		elif key == _CTRL_K:
-			self._setBuf(buf[:c])
+			if c < len(buf):
+				self._change(buf[:c], 0, c, buf[c:])
 		elif key == _CTRL_U:
-			self._setBuf(buf[c:])
-			c = 0
+			if c > 0 and self._change(buf[c:], 0, 0, buf[:c]):
+				c = 0
 		elif key == _CTRL_W:
 			i = c
 			while i > 0 and buf[i-1] == ' ':
 				i -= 1
 			while i > 0 and buf[i-1] != ' ':
 				i -= 1
-			self._setBuf(buf[:i] + buf[c:])
-			c = i
+			if i < c and self._change(buf[:i] + buf[c:], 0, i, buf[i:c]):
+				c = i
 		elif isPrintableKey(key):
-			self._deleteSelection()
+			if self._sel is not None and not self._deleteSelection():
+				return True
 			buf = self._getBuf()
 			c   = self._cur
-			self._setBuf(buf[:c] + chr(key) + buf[c:])
-			c += 1
+			if self._change(buf[:c] + chr(key) + buf[c:], 1, c, chr(key)):
+				c += 1
 		else:
 			return False
 

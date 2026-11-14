@@ -192,14 +192,14 @@ class Menu(Widget):
 	def xposition(self, index):
 		return 0
 
-	def index(self, idx: object):
-		"""Return integer index for *idx* (None for 'none')."""
-		i = self._resolveIndex(idx)
+	def index(self, index: object):
+		"""Return integer index for *index* (None for 'none')."""
+		i = self._resolveIndex(index)
 		return None if i < 0 else i
 
-	def type(self, idx: object) -> str:
-		"""Return type string for item at *idx*."""
-		i = self._resolveIndex(idx)
+	def type(self, index: object) -> str:
+		"""Return type string for item at *index*."""
+		i = self._resolveIndex(index)
 		if 0 <= i < len(self._menuItems):
 			return self._menuItems[i]['type']
 		return ''
@@ -256,14 +256,14 @@ class Menu(Widget):
 
 	tkPopup = tk_popup
 
-	def activate(self, idx):
-		i = self._resolveIndex(idx)
+	def activate(self, index):
+		i = self._resolveIndex(index)
 		self._active = i if self._selectable(i) else -1
 		self._markDirty()
 
-	def invoke(self, idx: object):
-		"""Invoke the item at *idx*."""
-		i = self._resolveIndex(idx)
+	def invoke(self, index: object):
+		"""Invoke the item at *index*."""
+		i = self._resolveIndex(index)
 		if not (0 <= i < len(self._menuItems)):
 			return None
 		item  = self._menuItems[i]

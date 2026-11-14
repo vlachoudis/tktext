@@ -12,6 +12,7 @@
 
 """colorchooser — tkinter.colorchooser replacement (text input of a colour)."""
 from ._colors import ColorManager
+from .commondialog import Dialog
 
 
 def askcolor(color=None, **options):
@@ -31,9 +32,9 @@ def askcolor(color=None, **options):
 	return (rgb, '#%02x%02x%02x' % rgb)
 
 
-class Chooser:
-	def __init__(self, master=None, **options):
-		self.options = options
+class Chooser(Dialog):
+	"""Colour chooser dialog (tkinter.colorchooser.Chooser)."""
+	command = 'tk_chooseColor'
 
-	def show(self, **options):
-		return askcolor(**{**self.options, **options})
+	def _show(self, options):
+		return askcolor(options.pop('initialcolor', None), **options)

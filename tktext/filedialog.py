@@ -12,6 +12,7 @@
 
 """filedialog — file and directory picker dialogs.  Mirrors tkinter.filedialog."""
 from ._dialog import _getApp, _FileDialog
+from .commondialog import Dialog
 
 
 def _run(title, mode, initialdir=None, initialfile='',
@@ -60,3 +61,38 @@ def askopenfile(mode='r', **kw):
 def asksaveasfile(mode='w', **kw):
 	fn = asksaveasfilename(**kw)
 	return open(fn, mode) if fn else None
+
+
+def askopenfiles(mode='r', **kw):
+	"""Ask for file names and return the opened files (tuple)."""
+	names = askopenfilenames(**kw)
+	return tuple(open(fn, mode) for fn in names) if names else ()
+
+
+# ------------------------------------------------------------------
+# Class interface (tkinter.filedialog.Open / SaveAs / Directory)
+# ------------------------------------------------------------------
+
+class _FileDialogBase(Dialog):
+	def _show(self, options):
+		opts = dict(options)
+		if opts.pop('multiple', False):
+			return askopenfilenames(**opts)
+		return self._ask(**opts)
+
+
+class Open(_FileDialogBase):
+	command = 'tk_getOpenFile'
+	_ask    = staticmethod(askopenfilename)
+
+
+class SaveAs(_FileDialogBase):
+	command = 'tk_getSaveFile'
+	_ask    = staticmethod(asksaveasfilename)
+
+
+class Directory(Dialog):
+	command = 'tk_chooseDirectory'
+
+	def _show(self, options):
+		return askdirectory(**options)

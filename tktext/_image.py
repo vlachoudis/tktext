@@ -142,8 +142,8 @@ class Image:
 
 	config = configure
 
-	def cget(self, key):
-		return self._opts.get(key, '')
+	def cget(self, option):
+		return self._opts.get(option, '')
 
 	__getitem__ = cget
 
@@ -177,17 +177,54 @@ class PhotoImage(Image):
 	def blank(self):
 		pass
 
-	def copy(self, *a, **kw):
-		return self._derived(*self._size)
+	def _region(self, fromCoords):
+		"""Size of the from_coords=(x1, y1[, x2, y2]) region."""
+		w, h = self._size
+		if not fromCoords:
+			return w, h
+		c = [int(v) for v in fromCoords]
+		if len(c) < 4:
+			return max(0, w - c[0]), max(0, h - (c[1] if len(c) > 1 else 0))
+		return abs(c[2] - c[0]), abs(c[3] - c[1])
 
-	def zoom(self, x, y=''):
-		y = x if y == '' else y
-		return self._derived(self._size[0] * int(x), self._size[1] * int(y))
+	@staticmethod
+	def _factors(value, default):
+		if value is None:
+			return default, default
+		if isinstance(value, (int, float, str)):
+			return int(value), int(value)
+		v = [int(x) for x in value]
+		return v[0], v[-1]
 
-	def subsample(self, x, y=''):
+	def copy(self, *, from_coords=None, zoom=None, subsample=None):
+		w, h	= self._region(from_coords)
+		zx, zy	= self._factors(zoom, 1)
+		sx, sy	= self._factors(subsample, 1)
+		return self._derived(w * zx // max(1, sx), h * zy // max(1, sy))
+
+	def zoom(self, x, y='', *, from_coords=None):
 		y = x if y == '' else y
-		return self._derived(self._size[0] // max(1, int(x)),
-			self._size[1] // max(1, int(y)))
+		return self.copy(zoom=(x, y), from_coords=from_coords)
+
+	def subsample(self, x, y='', *, from_coords=None):
+		y = x if y == '' else y
+		return self.copy(subsample=(x, y), from_coords=from_coords)
+
+	def copy_replace(self, sourceImage, *, from_coords=None, to=None, shrink=False,
+			zoom=None, subsample=None, compositingrule=None):
+		"""Copy (a region of) *sourceImage* into this image: only the size
+		and the glyph matter in a terminal."""
+		if isinstance(sourceImage, str):
+			sourceImage = _imageByName(sourceImage)
+		img = sourceImage.copy(from_coords=from_coords, zoom=zoom, subsample=subsample)
+		x, y = (list(map(int, to)) + [0, 0])[:2] if to else (0, 0)
+		w, h = self._size
+		if shrink:
+			w, h = x + img._size[0], y + img._size[1]
+		else:
+			w, h = max(w, x + img._size[0]), max(h, y + img._size[1])
+		self.configure(width=w, height=h)
+		self.glyph = sourceImage.glyph
 
 	def get(self, x, y):
 		return (0, 0, 0)

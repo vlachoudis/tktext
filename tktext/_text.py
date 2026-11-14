@@ -514,10 +514,10 @@ class Text(_ScrollMixin, Widget):
 		self._redoStack.clear()
 		self._lastEdit = None
 
-	def editModified(self, flag=None):
-		if flag is None:
+	def editModified(self, arg=None):
+		if arg is None:
 			return self._modified
-		self._modified = bool(flag)
+		self._modified = bool(arg)
 		return None
 
 	def edit(self, *args):
@@ -546,11 +546,11 @@ class Text(_ScrollMixin, Widget):
 	# Public API — content
 	# ------------------------------------------------------------------
 
-	def insert(self, idx, chars, *tags):
-		"""Insert *chars* at *idx*; extra args are (tags, chars, tags…)."""
+	def insert(self, index, chars, *tags):
+		"""Insert *chars* at *index*; extra args are (tags, chars, tags…)."""
 		if self._opts.get('state') == 'disabled':
 			return
-		pos = self._parseIndex(idx)
+		pos = self._parseIndex(index)
 		if pos == self._endPos():
 			pos = self._lastPos()		# never after the final newline
 		self._beginEdit()
@@ -584,12 +584,12 @@ class Text(_ScrollMixin, Widget):
 		# here relaid the whole text out at every insert); keyboard
 		# editing scrolls in _handleKey, applications call see()
 
-	def delete(self, idx1, idx2=None):
-		"""Delete text between *idx1* and *idx2* (or one char at *idx1*)."""
+	def delete(self, index1, index2=None):
+		"""Delete text between *index1* and *index2* (or one char at *index1*)."""
 		if self._opts.get('state') == 'disabled':
 			return
-		a = self._parseIndex(idx1)
-		b = self._parseIndex(idx2) if idx2 is not None else \
+		a = self._parseIndex(index1)
+		b = self._parseIndex(index2) if index2 is not None else \
 			self._movePos(a, 1)
 		a = min(a, self._lastPos())
 		b = min(b, self._lastPos())
@@ -599,22 +599,22 @@ class Text(_ScrollMixin, Widget):
 		self._rawDelete(a, b)
 		self._lastEdit = None
 
-	def replace(self, idx1, idx2, chars, *tags):
+	def replace(self, index1, index2, chars, *tags):
 		if self._opts.get('state') == 'disabled':
 			return
-		a = self._toTkIndex(min(self._parseIndex(idx1), self._lastPos()))
-		self.delete(idx1, idx2)
+		a = self._toTkIndex(min(self._parseIndex(index1), self._lastPos()))
+		self.delete(index1, index2)
 		self.insert(a, chars, *tags)
 
-	def get(self, idx1, idx2=None):
-		"""Return text between *idx1* and *idx2*."""
-		a = self._parseIndex(idx1)
-		if idx2 is None:
+	def get(self, index1, index2=None):
+		"""Return text between *index1* and *index2*."""
+		a = self._parseIndex(index1)
+		if index2 is None:
 			if a == self._endPos():
 				return ''
 			r, c = a
 			return self._buf[r][c] if c < len(self._buf[r]) else '\n'
-		b = self._parseIndex(idx2)
+		b = self._parseIndex(index2)
 		if b <= a:
 			return ''
 		trailing = ''
@@ -688,22 +688,42 @@ class Text(_ScrollMixin, Widget):
 			return None
 		return result
 
-	def index(self, idx) -> str:
-		"""Return the normalised "line.col" form of *idx*."""
-		return self._toTkIndex(self._parseIndex(idx))
+	def index(self, index) -> str:
+		"""Return the normalised "line.col" form of *index*."""
+		return self._toTkIndex(self._parseIndex(index))
 
-	def compare(self, idx1, op, idx2) -> bool:
-		a = self._parseIndex(idx1)
-		b = self._parseIndex(idx2)
+	def compare(self, index1, op, index2) -> bool:
+		a = self._parseIndex(index1)
+		b = self._parseIndex(index2)
 		return {'<': a < b, '<=': a <= b, '==': a == b,
 			'>=': a >= b, '>': a > b, '!=': a != b}[op]
 
-	def count(self, idx1, idx2, *options):
-		a = self._offset(self._parseIndex(idx1))
-		b = self._offset(self._parseIndex(idx2))
-		if 'lines' in options:
-			return (self._parseIndex(idx2)[0] - self._parseIndex(idx1)[0],)
-		return (b - a,)
+	def count(self, index1, index2, *options, return_ints=False):
+		"""Count chars/indices/lines/xpixels/ypixels from *index1* to
+		*index2* (tkinter 3.13 semantics: a tuple, None for a zero count
+		of one option, an int with return_ints and one option)."""
+		p1	= self._parseIndex(index1)
+		p2	= self._parseIndex(index2)
+		opts	= [str(o).lstrip('-') for o in options if str(o).lstrip('-') != 'update']
+		res	= []
+		for opt in opts or ['indices']:
+			if opt in ('lines', 'displaylines'):
+				res.append(p2[0] - p1[0])
+			elif opt == 'ypixels':
+				res.append((p2[0] - p1[0]) * _core.PY)
+			elif opt == 'xpixels':
+				res.append((p2[1] - p1[1]) * _core.PX)
+			elif opt in ('chars', 'indices', 'displaychars', 'displayindices'):
+				res.append(self._offset(p2) - self._offset(p1))
+			else:
+				raise TclError(f'bad option "-{opt}"')
+		result = res[0] if len(res) == 1 else tuple(res)
+		if not return_ints:
+			if not result:
+				return None
+			if len(options) <= 1:
+				return (result,)
+		return result
 
 	def search(self, pattern, index, stopindex=None, forwards=None,
 			backwards=None, exact=None, regexp=None, nocase=None,
@@ -734,14 +754,14 @@ class Text(_ScrollMixin, Widget):
 			count.set(m.end() - m.start())
 		return self._toTkIndex(self._fromOffset(m.start()))
 
-	def see(self, idx):
-		"""Scroll so that *idx* is visible."""
-		pos = self._clampPos(self._parseIndex(idx), allowEnd=False)
+	def see(self, index):
+		"""Scroll so that *index* is visible."""
+		pos = self._clampPos(self._parseIndex(index), allowEnd=False)
 		self._scrollToPos(pos)
 		self._markDirty()
 
-	def bbox(self, idx):
-		pos = self._clampPos(self._parseIndex(idx), allowEnd=False)
+	def bbox(self, index):
+		pos = self._clampPos(self._parseIndex(index), allowEnd=False)
 		sp  = self._screenPos(pos)
 		if sp is None:
 			return None
@@ -792,16 +812,16 @@ class Text(_ScrollMixin, Widget):
 	# Marks
 	# ------------------------------------------------------------------
 
-	def markSet(self, name, idx):
-		"""Set named mark to *idx*."""
-		pos = self._parseIndex(idx)
-		if name == 'insert':
+	def markSet(self, markName, index):
+		"""Set mark *markName* to *index*."""
+		pos = self._parseIndex(index)
+		if markName == 'insert':
 			pos = self._clampPos(pos, allowEnd=False)
-		self._marks[name] = pos
-		self._gravity.setdefault(name, 'right')
-		if name == 'insert':
+		self._marks[markName] = pos
+		self._gravity.setdefault(markName, 'right')
+		if markName == 'insert':
 			self._wantCol = None
-		elif name == ANCHOR_MARK:
+		elif markName == ANCHOR_MARK:
 			self._selAnchor = pos
 		self._markDirty()
 
@@ -816,10 +836,10 @@ class Text(_ScrollMixin, Widget):
 	def markNames(self):
 		return tuple(self._marks.keys())
 
-	def markGravity(self, name, direction=None):
+	def markGravity(self, markName, direction=None):
 		if direction is None:
-			return self._gravity.get(name, 'right')
-		self._gravity[name] = direction
+			return self._gravity.get(markName, 'right')
+		self._gravity[markName] = direction
 
 	mark_set	= markSet
 	mark_unset	= markUnset
@@ -859,9 +879,9 @@ class Text(_ScrollMixin, Widget):
 		self._markDirty()
 		return None
 
-	def tagCget(self, name, option):
+	def tagCget(self, tagName, option):
 		option = {'fg': 'foreground', 'bg': 'background'}.get(option, option)
-		return self._tagCfg.get(name, {}).get(option, '')
+		return self._tagCfg.get(tagName, {}).get(option, '')
 
 	def _addTagRange(self, name, a, b):
 		self._ensureTag(name)
@@ -904,31 +924,31 @@ class Text(_ScrollMixin, Widget):
 		i = bisect.bisect_right(ranges, pos, key=_rangeStart) - 1
 		return i >= 0 and pos < ranges[i][1]
 
-	def tagAdd(self, name, idx1, *more):
-		"""Apply tag *name* to [idx1, idx2) (more pairs may follow)."""
-		args = [idx1] + list(more)
+	def tagAdd(self, tagName, index1, *more):
+		"""Apply tag *tagName* to [index1, index2) (more pairs may follow)."""
+		args = [index1] + list(more)
 		for i in range(0, len(args), 2):
 			a = self._parseIndex(args[i])
 			if i + 1 < len(args):
 				b = self._parseIndex(args[i + 1])
 			else:
 				b = self._movePos(a, 1)
-			if name == 'sel':
+			if tagName == 'sel':
 				a = min(a, self._lastPos())
 				b = min(b, self._lastPos())
-			self._addTagRange(name, a, b)
+			self._addTagRange(tagName, a, b)
 		self._markDirty()
 
-	def tagRemove(self, name, idx1, idx2=None):
+	def tagRemove(self, tagName, index1, index2=None):
 		"""Remove tag from the range [idx1, idx2)."""
-		if name not in self._tagRanges:
+		if tagName not in self._tagRanges:
 			return
-		a = self._parseIndex(idx1)
-		b = self._parseIndex(idx2) if idx2 is not None else \
+		a = self._parseIndex(index1)
+		b = self._parseIndex(index2) if index2 is not None else \
 			self._movePos(a, 1)
 		if a >= b:		# like Tk: nothing to remove
 			return
-		self._removeTagRange(name, a, b)
+		self._removeTagRange(tagName, a, b)
 		self._markDirty()
 
 	def _removeTagRange(self, name, a, b):
@@ -969,70 +989,70 @@ class Text(_ScrollMixin, Widget):
 		self._tagCfgVersion += 1
 		self._markDirty()
 
-	def tagRanges(self, name):
+	def tagRanges(self, tagName):
 		result = []
-		for a, b in self._tagRanges.get(name, []):
+		for a, b in self._tagRanges.get(tagName, []):
 			result += [self._toTkIndex(a), self._toTkIndex(b)]
 		return tuple(result)
 
-	def tagNames(self, idx=None):
-		if idx is None:
+	def tagNames(self, index=None):
+		if index is None:
 			return tuple(self._tagOrder)
-		pos = self._parseIndex(idx)
+		pos = self._parseIndex(index)
 		return tuple(n for n in self._tagOrder if self._tagCovers(n, pos))
 
-	def tagNextrange(self, name, idx1, idx2=None):
-		a = self._parseIndex(idx1)
-		b = self._parseIndex(idx2) if idx2 is not None else self._endPos()
-		ranges = self._tagRanges.get(name, [])
+	def tagNextrange(self, tagName, index1, index2=None):
+		a = self._parseIndex(index1)
+		b = self._parseIndex(index2) if index2 is not None else self._endPos()
+		ranges = self._tagRanges.get(tagName, [])
 		i = bisect.bisect_left(ranges, a, key=_rangeStart)
 		if i < len(ranges) and ranges[i][0] < b:
 			s, e = ranges[i]
 			return (self._toTkIndex(s), self._toTkIndex(e))
 		return ()
 
-	def tagPrevrange(self, name, idx1, idx2=None):
-		a = self._parseIndex(idx1)
-		b = self._parseIndex(idx2) if idx2 is not None else (0, 0)
-		ranges = self._tagRanges.get(name, [])
+	def tagPrevrange(self, tagName, index1, index2=None):
+		a = self._parseIndex(index1)
+		b = self._parseIndex(index2) if index2 is not None else (0, 0)
+		ranges = self._tagRanges.get(tagName, [])
 		i = bisect.bisect_left(ranges, a, key=_rangeStart) - 1
 		if i >= 0 and ranges[i][0] >= b:
 			s, e = ranges[i]
 			return (self._toTkIndex(s), self._toTkIndex(e))
 		return ()
 
-	def tagRaise(self, name, aboveThis=None):
-		if name not in self._tagOrder or name == 'sel':
+	def tagRaise(self, tagName, aboveThis=None):
+		if tagName not in self._tagOrder or tagName == 'sel':
 			return
-		self._tagOrder.remove(name)
+		self._tagOrder.remove(tagName)
 		if aboveThis in self._tagOrder:
-			self._tagOrder.insert(self._tagOrder.index(aboveThis) + 1, name)
+			self._tagOrder.insert(self._tagOrder.index(aboveThis) + 1, tagName)
 		else:
-			self._tagOrder.insert(len(self._tagOrder) - 1, name)
+			self._tagOrder.insert(len(self._tagOrder) - 1, tagName)
 		self._tagCfgVersion += 1
 		self._markDirty()
 
-	def tagLower(self, name, belowThis=None):
-		if name not in self._tagOrder or name == 'sel':
+	def tagLower(self, tagName, belowThis=None):
+		if tagName not in self._tagOrder or tagName == 'sel':
 			return
-		self._tagOrder.remove(name)
+		self._tagOrder.remove(tagName)
 		if belowThis in self._tagOrder:
-			self._tagOrder.insert(self._tagOrder.index(belowThis), name)
+			self._tagOrder.insert(self._tagOrder.index(belowThis), tagName)
 		else:
-			self._tagOrder.insert(0, name)
+			self._tagOrder.insert(0, tagName)
 		self._tagCfgVersion += 1
 		self._markDirty()
 
-	def tagBind(self, name, sequence, func, add=None):
-		self._ensureTag(name)
-		binds = self._tagBinds.setdefault(name, {})
+	def tagBind(self, tagName, sequence, func, add=None):
+		self._ensureTag(tagName)
+		binds = self._tagBinds.setdefault(tagName, {})
 		if not add or sequence not in binds:
 			binds[sequence] = []
 		binds[sequence].append(func)
-		return f'{name}{sequence}{id(func)}'
+		return f'{tagName}{sequence}{id(func)}'
 
-	def tagUnbind(self, name, sequence, funcid=None):
-		self._tagBinds.get(name, {}).pop(sequence, None)
+	def tagUnbind(self, tagName, sequence, funcid=None):
+		self._tagBinds.get(tagName, {}).pop(sequence, None)
 
 	tag_configure	= tagConfigure
 	tag_config	= tagConfigure

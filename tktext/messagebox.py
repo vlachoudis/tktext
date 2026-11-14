@@ -12,6 +12,7 @@
 
 """messagebox — modal dialog functions.  Mirrors tkinter.messagebox."""
 from ._dialog import _getApp, _MsgDialog
+from .commondialog import Dialog
 
 # Return values / constants (same as tkinter.messagebox)
 ERROR		= 'error'
@@ -81,3 +82,24 @@ def askquestion(title=None, message=None, **kw) -> str:
 def askretrycancel(title=None, message=None, **kw) -> bool:
 	return bool(_run(title, message, [('Retry', True), ('Cancel', False)],
 		WARNING, **kw))
+
+
+_TYPE_BUTTONS = {
+	ABORTRETRYIGNORE: [('Abort', ABORT), ('Retry', RETRY), ('Ignore', IGNORE)],
+	OK:		[('OK', OK)],
+	OKCANCEL:	[('OK', OK), ('Cancel', CANCEL)],
+	RETRYCANCEL:	[('Retry', RETRY), ('Cancel', CANCEL)],
+	YESNO:		[('Yes', YES), ('No', NO)],
+	YESNOCANCEL:	[('Yes', YES), ('No', NO), ('Cancel', CANCEL)],
+}
+
+
+class Message(Dialog):
+	"""A message box: Message(title=, message=, icon=, type=).show()
+	returns the symbolic name of the chosen button."""
+	command = 'tk_messageBox'
+
+	def _show(self, options):
+		buttons = _TYPE_BUTTONS.get(options.pop('type', OK), _TYPE_BUTTONS[OK])
+		return _run(options.pop('title', None), options.pop('message', None),
+			buttons, **options) or buttons[-1][1]

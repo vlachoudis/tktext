@@ -113,15 +113,16 @@ class Tk(Wm, Frame):
 	# ------------------------------------------------------------------
 
 	def configure(self, cnf=None, **kwargs):
-		if cnf:
-			kwargs.update(cnf)
+		if isinstance(cnf, str) or not (cnf or kwargs):
+			return super().configure(cnf)
+		kwargs.update(cnf or {})
 		if 'menu' in kwargs:
 			self._ownMenuBar = kwargs.pop('menu') or None
 			self._dirty      = True
 			if not kwargs:
 				return None
 		kwargs.pop('class_', None)
-		return super().configure(**kwargs)
+		return super().configure(**kwargs) if kwargs else None
 
 	config = configure
 
@@ -142,7 +143,13 @@ class Tk(Wm, Frame):
 	def _viewable(self) -> bool:
 		return self._wmState == 'normal' and not self._destroyed
 
-	def bell(self):
+	def loadtk(self):
+		pass
+
+	def readprofile(self, baseName, className):
+		pass
+
+	def bell(self, displayof=0):
 		try:
 			curses.beep()
 		except curses.error:
@@ -604,11 +611,13 @@ class Tk(Wm, Frame):
 		self._focusWidget = widget
 		if old is not None:
 			old._focused = False
+			old._focusChanged(False)
 			old._dispatch('<FocusOut>', _FocusEvent(old, 'FocusOut'))
 		if widget is not None:
 			widget._focused = True
 			top = widget.winfo_toplevel()
 			top._lastFocus = widget
+			widget._focusChanged(True)
 			widget._dispatch('<FocusIn>', _FocusEvent(widget, 'FocusIn'))
 		self._dirty = True
 

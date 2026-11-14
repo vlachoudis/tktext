@@ -18,6 +18,8 @@ cell size in pixel mode.  Font attributes are kept
 so that configure()/actual()/cget() round-trip; 'weight': 'bold' and
 'underline' are used by widgets that honour fonts.
 """
+import itertools
+
 from ._core import TclError
 from . import _core
 
@@ -27,7 +29,6 @@ BOLD		= 'bold'
 ITALIC		= 'italic'
 
 _fonts		= {}	# name -> Font
-_fontCount	= 0
 _DEFAULTS	= ('TkDefaultFont', 'TkTextFont', 'TkFixedFont', 'TkMenuFont',
 		   'TkHeadingFont', 'TkCaptionFont', 'TkSmallCaptionFont',
 		   'TkIconFont', 'TkTooltipFont')
@@ -70,11 +71,11 @@ def _parse(font):
 class Font:
 	"""Mirrors tkinter.font.Font."""
 
+	counter = itertools.count(1)	# names of unnamed fonts (tkinter API)
+
 	def __init__(self, root=None, font=None, name=None, exists=False, **options):
-		global _fontCount
 		if name is None:
-			_fontCount += 1
-			name = f'font{_fontCount}'
+			name = f'font{next(Font.counter)}'
 		self.name	= str(name)
 		if exists and self.name in _fonts:
 			self._opts = _fonts[self.name]._opts

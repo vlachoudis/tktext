@@ -113,6 +113,9 @@ tktext/
   _app.py            # Tk root: event loop, input dispatch, focus, menubar, timers, errors
   _label.py          # Label
   _button.py         # Button
+  _menubutton.py     # Menubutton (tk + ttk): Button posting its menu=
+  _tkoptions.py      # Tk 8.6.18 option table per widget class (generated from tkinter
+                     # keys()): configure() checks/expands names, keys(), configure('opt')
   _entry.py          # Entry (single-line editor; base class of Spinbox and Combobox)
   _spinbox.py        # Spinbox (Entry + ▲▼)
   _combobox.py       # Combobox (Entry + dropdown overlay in _postedMenus)
@@ -131,10 +134,12 @@ tktext/
                      # for the STRING format of the per-type app._clipboard (_core.py);
                      # used only with a real screen (_ownScreen), never by the fake-screen tests
   messagebox.py, filedialog.py, ttk.py   # tkinter-compatible modules
-  font.py, colorchooser.py, dnd.py, simpledialog.py, constants.py
+  font.py, colorchooser.py, dnd.py, simpledialog.py, constants.py,
+  scrolledtext.py, commondialog.py, dialog.py
 tests/               # unittest suite; fakescreen.py = in-memory curses window
 docs/MANUAL.md       # user manual (API, dialogs, keys, colours/theme roles, env vars):
                      # update it when public behaviour or theme roles change
+docs/TKINTER_DIFF.md # what differs from / is missing vs tkinter (Python 3.14, Tk 8.6.18)
 ```
 
 ## Running Tests

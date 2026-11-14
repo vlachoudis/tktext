@@ -84,13 +84,13 @@ class Notebook(Widget):
 			self._select(0)
 		self._markDirty()
 
-	def select(self, tabId=None):
+	def select(self, tab_id=None):
 		"""Select tab, or return the currently-selected tab widget."""
-		if tabId is None:
+		if tab_id is None:
 			if 0 <= self._selIdx < len(self._tabs):
 				return self._tabs[self._selIdx]['widget']
 			return ''
-		idx = self._resolveTabId(tabId)
+		idx = self._resolveTabId(tab_id)
 		if idx is not None:
 			self._select(idx)
 
@@ -109,10 +109,10 @@ class Notebook(Widget):
 		if changed:
 			self._fireVirtual('<<NotebookTabChanged>>')
 
-	def forget(self, tabId=None):
-		if tabId is None:		# Widget.forget() semantics
+	def forget(self, tab_id=None):
+		if tab_id is None:		# Widget.forget() semantics
 			return super().forget()
-		idx = self._resolveTabId(tabId)
+		idx = self._resolveTabId(tab_id)
 		if idx is None:
 			return
 		wasSel = idx == self._selIdx
@@ -126,8 +126,8 @@ class Notebook(Widget):
 			self._fireVirtual('<<NotebookTabChanged>>')
 		self._markDirty()
 
-	def hide(self, tabId):
-		idx = self._resolveTabId(tabId)
+	def hide(self, tab_id):
+		idx = self._resolveTabId(tab_id)
 		if idx is None:
 			return
 		self._tabs[idx]['state'] = 'hidden'
@@ -159,12 +159,12 @@ class Notebook(Widget):
 	def tabs(self) -> tuple:
 		return tuple(t['widget'] for t in self._tabs)
 
-	def index(self, tabId) -> int:
-		if tabId in ('end', 'END'):
+	def index(self, tab_id) -> int:
+		if tab_id in ('end', 'END'):
 			return len(self._tabs)
-		idx = self._resolveTabId(tabId)
+		idx = self._resolveTabId(tab_id)
 		if idx is None:
-			raise TclError(f'Invalid tab id {tabId!r}')
+			raise TclError(f'Invalid tab id {tab_id!r}')
 		return idx
 
 	def enable_traversal(self):

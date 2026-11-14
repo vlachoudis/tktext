@@ -12,6 +12,7 @@
 
 import itertools as _itertools
 import curses
+import functools
 from . import _colors, _sysclip
 from ._events import Event, KeyEvent, MouseEvent, B1_PRESS, B1_RELEASE, \
 	B1_CLICK, B1_DCLICK, B3_ANY, MOTION, isWheel, keysymOf, \
@@ -434,15 +435,91 @@ class Widget:
 		'foreground':		'fg',
 	}
 
+	# Tk option name -> name in _opts (and back)
+	_TK2OPT	= {'background': 'bg', 'foreground': 'fg', 'from': 'from_', 'class': 'class_'}
+	_OPT2TK	= {v: k for k, v in _TK2OPT.items()}
+	_optTables	= {}		# widget class -> Tk option table (or None)
+	_optDefaults	= {}		# widget class -> {option: default value}
+
+	def _tkOptions(self):
+		"""Tk option table of the widget class, None for no option checks."""
+		cls = type(self)
+		try:
+			return Widget._optTables[cls]
+		except KeyError:
+			pass
+		from ._tkoptions import TK_OPTIONS
+		table = None
+		for k in cls.__mro__:
+			if k.__module__.startswith('tktext') and k.__name__ in TK_OPTIONS:
+				table = TK_OPTIONS[k.__name__]
+				break
+		Widget._optTables[cls] = table
+		return table
+
+	def _optionName(self, key, table):
+		"""Full option name of *key*: itself when known, else its unique
+		abbreviation like Tk ('border' -> 'borderwidth'); TclError if
+		unknown or ambiguous."""
+		if key in table or key in self._opts or key == 'name' or \
+				self._OPT2TK.get(key) in table or \
+				self._OPTION_ALIASES.get(key, key) in self._opts:
+			return key
+		names = set(table)
+		names.update(self._OPT2TK.get(k, k) for k in self._opts)
+		match = [n for n in names if n.startswith(key)]
+		if len(match) == 1:
+			return match[0]
+		if match:
+			raise TclError(f'ambiguous option "-{key}"')
+		raise TclError(f'unknown option "-{key}"')
+
+	def _checkOptions(self, kwargs):
+		"""Raise TclError for an option unknown to Tk and to the widget,
+		expand abbreviated option names in place."""
+		table = self._tkOptions()
+		if table is None:
+			return
+		for key in list(kwargs):
+			name = self._optionName(key, table)
+			if name != key:
+				kwargs[name] = kwargs.pop(key)
+
+	def _configQuery(self, name):
+		"""tkinter configure('option'): (name, dbName, dbClass, default, value),
+		or (alias, '-target') for an alias like 'bd'."""
+		name	= name.lstrip('-')
+		table	= self._tkOptions() or {}
+		spec	= table.get(name)
+		if spec is not None and len(spec) == 1:
+			return (name, spec[0])
+		key = self._TK2OPT.get(name, name)
+		if spec is None:
+			if key not in self._opts:
+				raise TclError(f'unknown option "-{name}"')
+			spec = (name, name.capitalize())
+		defaults = Widget._optDefaults.get(type(self), {})
+		return (name, spec[0], spec[1], defaults.get(key, ''), self.cget(name))
+
 	def configure(self, cnf=None, **kwargs):
 		"""Set widget options.  Mirrors tkinter's configure/config.
 
-		Called without arguments it returns a dict of all options.
+		configure('option') returns the option tuple
+		(name, dbName, dbClass, default, value); called without arguments
+		it returns a dict of these tuples for every option.
 		"""
+		if isinstance(cnf, str) and not kwargs:
+			return self._configQuery(cnf)
 		if cnf:
 			kwargs.update(cnf)
 		if not kwargs:
-			return dict(self._opts)
+			return {k: self._configQuery(k) for k in self.keys()}
+		self._checkOptions(kwargs)
+		# the first values seen of each option are the class defaults
+		defaults = Widget._optDefaults.setdefault(type(self), {})
+		if len(defaults) < len(self._opts):
+			for k, v in self._opts.items():
+				defaults.setdefault(k, v)
 		for alias, name in self._OPTION_ALIASES.items():
 			if alias in kwargs:
 				kwargs[name] = kwargs.pop(alias)
@@ -490,16 +567,27 @@ class Widget:
 
 	def cget(self, key):
 		"""Return the current value of option *key*."""
-		key = self._OPTION_ALIASES.get(key, key)
-		if key == 'from':
-			key = 'from_'
-		value = self._opts.get(key)
+		name	= key
+		key	= self._OPTION_ALIASES.get(key, key)
+		key	= self._TK2OPT.get(key, key)
+		value	= self._opts.get(key)
 		if not value and key in ('bg', 'fg'):
 			return self._color(key)
-		return '' if value is None and key not in self._opts else value
+		if value is None and key not in self._opts:
+			table = self._tkOptions()
+			if table is not None and name not in table and \
+					self._OPT2TK.get(key, key) not in table:
+				full = self._optionName(name, table)
+				return self.cget(full) if full != name else ''
+			return ''
+		return value
 
 	def keys(self):
-		return list(self._opts.keys())
+		"""Option names like tkinter: the Tk options of the widget class
+		plus the tktext specific ones."""
+		names = set(self._tkOptions() or ())
+		names.update(self._OPT2TK.get(k, k) for k in self._opts)
+		return sorted(names)
 
 	def __setitem__(self, key, value):
 		self.configure(**{key: value})
@@ -513,42 +601,42 @@ class Widget:
 
 	_funcSerial = 0
 
-	def bind(self, event=None, callback=None, add=None):
-		"""Bind *event* string to *callback*.
+	def bind(self, sequence=None, func=None, add=None):
+		"""Bind the event *sequence* to *func*.
 
 		If *add* is truthy the callback is appended; otherwise it replaces
 		any existing binding for that event string.  Returns a funcid
 		that can be passed to unbind().
 		"""
-		if event is None:
+		if sequence is None:
 			return list(self._bindings.keys())
-		if callback is None:
-			return [f for _, f in self._bindings.get(event, [])]
-		if not add or event not in self._bindings:
-			self._bindings[event] = []
+		if func is None:
+			return [f for _, f in self._bindings.get(sequence, [])]
+		if not add or sequence not in self._bindings:
+			self._bindings[sequence] = []
 		Widget._funcSerial += 1
-		funcid = f'{id(callback)}_{Widget._funcSerial}'
-		self._bindings[event].append((funcid, callback))
+		funcid = f'{id(func)}_{Widget._funcSerial}'
+		self._bindings[sequence].append((funcid, func))
 		return funcid
 
-	def unbind(self, event, funcid=None):
+	def unbind(self, sequence, funcid=None):
 		if funcid is None:
-			self._bindings.pop(event, None)
+			self._bindings.pop(sequence, None)
 			return
-		lst = self._bindings.get(event, [])
-		self._bindings[event] = [(i, f) for i, f in lst if i != funcid]
+		lst = self._bindings.get(sequence, [])
+		self._bindings[sequence] = [(i, f) for i, f in lst if i != funcid]
 
-	def bind_all(self, event=None, callback=None, add=None):
-		"""Bind *event* at application level (fires for every widget)."""
+	def bind_all(self, sequence=None, func=None, add=None):
+		"""Bind *sequence* at application level (fires for every widget)."""
 		app = self._getApp()
 		if app is None:
 			return None
-		return Widget.bind(app._allBindings, event, callback, add)
+		return Widget.bind(app._allBindings, sequence, func, add)
 
-	def unbind_all(self, event):
+	def unbind_all(self, sequence):
 		app = self._getApp()
 		if app is not None:
-			app._allBindings._bindings.pop(event, None)
+			app._allBindings._bindings.pop(sequence, None)
 
 	bindAll		= bind_all
 	unbindAll	= unbind_all
@@ -811,6 +899,7 @@ class Widget:
 	place_configure	= placeConfigure
 	place_forget	= placeForget
 	place_info	= placeInfo
+	info		= packInfo	# tkinter: Pack.info comes first in the MRO
 
 	def lift(self, aboveThis=None):
 		"""Raise this widget above its siblings (drawn last, hit first)."""
@@ -1021,6 +1110,10 @@ class Widget:
 	winfo_screen		= lambda self: ':0'
 	winfo_atom		= lambda self, name, displayof=0: hash(name) & 0xffff
 	winfo_pathname		= lambda self, id, displayof=0: str(self)
+	winfo_atomname		= lambda self, id, displayof=0: str(id)
+	winfo_colormapfull	= lambda self: False
+	winfo_visualid		= lambda self: '0x21'
+	winfo_visualsavailable	= lambda self, includeids=False: [('truecolor', 24)]
 
 	# ------------------------------------------------------------------
 	# Misc (tkinter.Misc) — names, class bindings, options, grabs
@@ -1364,6 +1457,8 @@ class Widget:
 	def grid_anchor(self, anchor=None):
 		pass
 
+	anchor = grid_anchor
+
 	# grid configuration on any widget (only containers lay out a grid)
 	def _gridTable(self, rows):
 		name = '_rowCfg' if rows else '_colCfg'
@@ -1426,6 +1521,8 @@ class Widget:
 
 	def grid_location(self, x, y):
 		return (0, 0)
+
+	location = grid_location
 
 	# ttk widget state (ttk.Widget.state / instate)
 	def state(self, statespec=None):
@@ -1492,6 +1589,7 @@ class Widget:
 		return ''
 
 	tk_busy_cget = busy_cget
+	tk_busy	= busy_hold
 
 	def _fireStructure(self, sequence, **attrs):
 		evt		= Event()
@@ -1505,20 +1603,41 @@ class Widget:
 	# Timers / application helpers available on every widget
 	# ------------------------------------------------------------------
 
-	def after(self, ms, func=None, *args):
+	def after(self, ms, func=None, *args, **kw):
 		app = self._getApp()
-		return app._after(ms, func, *args) if app else None
+		if app is None:
+			return None
+		if kw and func is not None:
+			func = functools.partial(func, **kw)
+		return app._after(ms, func, *args)
 
-	def afterIdle(self, func, *args):
-		return self.after(0, func, *args)
+	def afterIdle(self, func, *args, **kw):
+		return self.after(0, func, *args, **kw)
 
-	def afterCancel(self, handle):
+	def afterCancel(self, id):
 		app = self._getApp()
 		if app:
-			app._afterCancel(handle)
+			app._afterCancel(id)
+
+	def after_info(self, id=None):
+		"""Without *id* the pending after identifiers, with *id* the
+		tuple (function, 'timer'|'idle') like Tk 'after info'."""
+		app = self._getApp()
+		items = app._afterCallbacks if app else []
+		if id is None:
+			return tuple(item[1] for item in items)
+		for item in items:
+			if item[1] == id:
+				return (item[2], 'timer')
+		raise TclError(f'event "{id}" doesn\'t exist')
 
 	after_idle	= afterIdle
 	after_cancel	= afterCancel
+
+	def info_patchlevel(self):
+		"""Tcl/Tk patchlevel as a named tuple like sys.version_info."""
+		from . import _versionInfo
+		return _versionInfo(self.tk.call('info', 'patchlevel'))
 
 	def update(self):
 		app = self._getApp()
@@ -1965,6 +2084,9 @@ class Widget:
 	def _handleMouse(self, mx, my, bstate):
 		"""Default class behaviour for a mouse event.  Return True if consumed."""
 		return False
+
+	def _focusChanged(self, gained):
+		"""Class behaviour when the keyboard focus enters or leaves."""
 
 	def _handleVirtual(self, sequence):
 		"""Class behaviour for a virtual event generated on the widget

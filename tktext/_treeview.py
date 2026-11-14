@@ -83,8 +83,9 @@ class Treeview(_ScrollMixin, Widget):
 			Treeview.configure(self, **kwargs)
 
 	def configure(self, cnf=None, **kwargs):
-		if cnf:
-			kwargs.update(cnf)
+		if isinstance(cnf, str) or not (cnf or kwargs):
+			return super().configure(cnf)
+		kwargs.update(cnf or {})
 		if 'columns' in kwargs:
 			cols = kwargs['columns']
 			if isinstance(cols, str):

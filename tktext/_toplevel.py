@@ -238,15 +238,16 @@ class Toplevel(Wm, Frame):
 			Toplevel.configure(self, **kwargs)
 
 	def configure(self, cnf=None, **kwargs):
-		if cnf:
-			kwargs.update(cnf)
+		if isinstance(cnf, str) or not (cnf or kwargs):
+			return super().configure(cnf)
+		kwargs.update(cnf or {})
 		if 'menu' in kwargs:
 			self._ownMenuBar = kwargs.pop('menu') or None
 			self._markDirty()
 			if not kwargs:
 				return None
 		kwargs.pop('class_', None)
-		return super().configure(**kwargs)
+		return super().configure(**kwargs) if kwargs else None
 
 	config = configure
 

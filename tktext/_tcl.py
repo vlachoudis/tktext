@@ -215,10 +215,24 @@ class TclShim:
 			if op == 'remove':
 				items = _splitlist(rest[2]) if len(rest) > 2 else None
 				return widget._tagRemove(rest[1], items)
+		if sub in ('configure', 'config'):
+			if len(rest) == 1:
+				return widget.configure(str(rest[0]))
+			if rest:
+				return widget.configure(**_optionPairs(rest))
+		elif sub == 'cget' and rest:
+			return widget.cget(str(rest[0]).lstrip('-'))
 		func = getattr(widget, sub, None)
 		if callable(func):
 			return func(*rest)
 		raise TclError(f'bad option "{sub}"')
+
+
+def _optionPairs(args):
+	"""('-text', 'a', '-width', 3) -> {'text': 'a', 'width': 3}"""
+	if len(args) % 2:
+		raise TclError(f'value for "{args[-1]}" missing')
+	return {str(args[i]).lstrip('-'): args[i+1] for i in range(0, len(args), 2)}
 
 
 # ---------------------------------------------------------------------------
@@ -246,12 +260,29 @@ def _wmCommand(tcl, *args):
 	return func(*args[2:])
 
 
+def _winfoCommand(tcl, *args):
+	"""winfo <sub> <window> …: the widget's winfo_<sub>() method."""
+	if len(args) < 2:
+		raise TclError('wrong # args: should be "winfo option ?arg ...?"')
+	sub = str(args[0])
+	if sub == 'exists':
+		try:
+			return int(tcl._widget(args[1]).winfo_exists())
+		except TclError:
+			return 0
+	func = getattr(tcl._widget(args[1]), f'winfo_{sub}', None)
+	if func is None:
+		raise TclError(f'bad option "{sub}"')
+	result = func(*args[2:])
+	return int(result) if isinstance(result, bool) else result
+
+
 def _infoCommand(tcl, *args):
 	sub = str(args[0]) if args else ''
 	if sub == 'args':
 		return _infoArgs(tcl, *args)
 	if sub == 'patchlevel':
-		return '8.6.16'
+		return '8.6.18'
 	if sub == 'tclversion':
 		return '8.6'
 	raise TclError(f'unknown or ambiguous subcommand "{sub}"')
@@ -369,6 +400,7 @@ _COMMANDS = {
 	'tk':			_tkCommand,
 	'wm':			_wmCommand,
 	'info':			_infoCommand,
+	'winfo':		_winfoCommand,
 	'image':		_imageCommand,
 	'bind':			_bindCommand,
 	'tk::GetSelection':	_getSelection,

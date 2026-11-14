@@ -85,7 +85,8 @@ to the default root.
 | `Frame`, `LabelFrame` | Containers |
 | `Label`, `Message` | |
 | `Button` | Raised buttons draw as `[text]` in drop-in mode |
-| `Entry` | Single-line editor; default field colour from the `entry` theme role |
+| `Menubutton` | Button posting its `menu=` (`direction=below/above/left/right/flush`); also `ttk.Menubutton`; shows `▼` unless `indicatoron=0` |
+| `Entry` | Single-line editor; default field colour from the `entry` theme role; `validate`/`validatecommand`/`invalidcommand` like Tk |
 | `Spinbox`, `Combobox` | Entry subclasses (▲▼ arrows / drop-down list) |
 | `Text` | Tk index expressions, tags, marks, undo, wrap |
 | `Listbox` | |
@@ -101,6 +102,29 @@ to the default root.
 `tktext.ttk` provides the ttk versions (`ttk.Entry`, `ttk.Treeview`,
 `ttk.Notebook`, `ttk.Style` …).  Variables (`StringVar`, `IntVar`,
 `DoubleVar`, `BooleanVar`) support traces like tkinter.
+`tktext.scrolledtext.ScrolledText` is a Text with a scrollbar in a frame.
+
+### Options
+
+Options follow Tk 8.6.18 (`tktext/_tkoptions.py`, the classic and ttk
+options of each widget class merged):
+
+- `configure('text')` returns `('text', 'text', 'Text', default, value)`,
+  an alias `('bd', '-borderwidth')`; `configure()` the dict of these tuples
+  and `keys()` every option name.
+- An unknown option raises `TclError('unknown option "-foo"')`; a unique
+  abbreviation is expanded (`border=1` → `borderwidth`), an ambiguous one
+  raises.  Tk options that a terminal cannot show (`highlightthickness`,
+  `repeatdelay`, `style` …) are accepted and stored.
+
+### Entry validation
+
+`validate` = `none`, `key`, `focus`, `focusin`, `focusout` or `all`.
+`validatecommand`/`invalidcommand` are a callable, a registered command name
+or a tuple `(root.register(f), '%P', '%d' …)` with the Tk substitutions
+`%d %i %P %s %S %v %V %W`.  Key validation also covers `insert()`/`delete()`;
+a rejected edit leaves the text unchanged, and a command that raises or
+returns a non-boolean switches validation off (like Tk).
 
 ### Geometry managers
 
@@ -145,10 +169,17 @@ n    = simpledialog.askinteger('Count', 'How many?', minvalue=1)
 ```
 
 `messagebox`: `showinfo`, `showwarning`, `showerror`, `askokcancel`,
-`askyesno`, `askyesnocancel`, `askquestion`, `askretrycancel`.
+`askyesno`, `askyesnocancel`, `askquestion`, `askretrycancel`, `Message`.
 `filedialog`: `askopenfilename(s)`, `asksaveasfilename`, `askdirectory`,
-`askopenfile`, `asksaveasfile`.
+`askopenfile(s)`, `asksaveasfile`, `Open`, `SaveAs`, `Directory`.
 `simpledialog`: `askstring`, `askinteger`, `askfloat`.
+`colorchooser`: `askcolor`, `Chooser`.  `dialog.Dialog` (classic Tk dialog,
+the chosen button in `num`); the class dialogs derive from
+`commondialog.Dialog`.
+
+The emulated Tcl/Tk reports patchlevel `8.6.18` (`info patchlevel`,
+`root.info_patchlevel()`); `tktext.Tcl()` is an interpreter without windows.
+A full comparison with tkinter is in `docs/TKINTER_DIFF.md`.
 
 ---
 

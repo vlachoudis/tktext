@@ -53,16 +53,16 @@ class Combobox(Entry):
 		self._sel = None
 		self._scrollToCursor()
 
-	def current(self, idx=None):
+	def current(self, newindex=None):
 		"""Get or set the current selection index in the values list."""
 		vals = self._values()
-		if idx is None:
+		if newindex is None:
 			cur = self.get()
 			return vals.index(cur) if cur in vals else -1
-		idx = int(idx)
-		if not 0 <= idx < len(vals):
-			raise IndexError(f'index {idx} out of range')
-		self.set(vals[idx])
+		newindex = int(newindex)
+		if not 0 <= newindex < len(vals):
+			raise IndexError(f'index {newindex} out of range')
+		self.set(vals[newindex])
 		return None
 
 	# ------------------------------------------------------------------

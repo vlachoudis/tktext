@@ -24,7 +24,8 @@ from ._button    import Button
 from ._entry     import Entry
 from ._checkbutton  import Checkbutton
 from ._radiobutton  import Radiobutton
-from ._menu      import OptionMenu
+from ._menu      import OptionMenu as _OptionMenu
+from ._menubutton import Menubutton
 from ._misc      import Separator, Progressbar
 from ._panedwindow import Panedwindow
 from ._core      import Widget as _Widget
@@ -49,6 +50,30 @@ class Scale(_Scale):
 		kwargs.setdefault('orient', 'horizontal')
 		kwargs.setdefault('showvalue', 0)
 		super().__init__(parent, **kwargs)
+
+	def get(self, x=None, y=None):
+		"""Current value; with x, y the value at that point (the same
+		in a terminal: the coordinates are ignored)."""
+		return _Scale.get(self)
+
+
+class OptionMenu(_OptionMenu):
+	"""ttk.OptionMenu(master, variable, default=None, *values): unlike
+	tkinter.OptionMenu *default* is only the initial value."""
+
+	def __init__(self, master, variable, default=None, *values, **kwargs):
+		super().__init__(master, variable, None, **kwargs)
+		self.set_menu(default, *values)
+
+	def set_menu(self, default=None, *values):
+		"""Build a new menu of radiobuttons with *values* and optionally
+		a *default* value."""
+		self._menu.delete(0, 'end')
+		for v in values:
+			self._menu.add_command(label=str(v), command=self._makeSetter(v))
+		if default and self._variable is not None:
+			self._variable.set(default)
+		self._markDirty()
 
 
 class Style:
@@ -110,8 +135,26 @@ class Style:
 	def element_create(self, *a, **kw):
 		pass
 
+	def element_names(self):
+		return ()
+
+	def element_options(self, elementname):
+		return ()
+
+	def theme_create(self, themename, parent=None, settings=None):
+		if settings:
+			self.theme_settings(themename, settings)
+
+	def theme_settings(self, themename, settings):
+		"""Apply {style: {'configure': {…}, 'map': {…}}} to the styles."""
+		for style, spec in settings.items():
+			cfg = spec.get('configure') if isinstance(spec, dict) else None
+			if cfg:
+				self.configure(style, **cfg)
+
 
 LabeledScale	= Scale
+Widget		= _Widget
 PanedWindow	= Panedwindow
 Labelframe	= LabelFrame
 
@@ -127,6 +170,19 @@ class Sizegrip(_Widget):
 			Sizegrip.configure(self, **kwargs)
 
 
+def setup_master(master=None):
+	"""*master*, or the default root (RuntimeError without one)."""
+	if master is None:
+		import tktext
+		master = tktext._get_default_root()
+	return master
+
+
+def tclobjs_to_py(adict):
+	"""Values are Python objects already: *adict* is returned as is."""
+	return adict
+
+
 def __getattr__(name):
 	# tkinter constants are reachable through ttk too (ttk.INSERT ...)
 	import tktext
@@ -137,4 +193,5 @@ def __getattr__(name):
 __all__ = ['Button', 'Checkbutton', 'Combobox', 'Entry', 'Frame', 'Label',
 	'LabelFrame', 'Notebook', 'OptionMenu', 'Progressbar', 'Radiobutton',
 	'Scale', 'Scrollbar', 'Separator', 'Spinbox', 'Style', 'Treeview',
-	'Panedwindow', 'PanedWindow', 'Labelframe', 'LabelFrame', 'Sizegrip']
+	'Panedwindow', 'PanedWindow', 'Labelframe', 'LabelFrame', 'Sizegrip',
+	'Menubutton', 'LabeledScale', 'Widget', 'setup_master', 'tclobjs_to_py']

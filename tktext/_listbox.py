@@ -148,8 +148,9 @@ class Listbox(_ScrollMixin, Widget):
 			Listbox.configure(self, **kwargs)
 
 	def configure(self, cnf=None, **kwargs):
-		if cnf:
-			kwargs.update(cnf)
+		if isinstance(cnf, str) or not (cnf or kwargs):
+			return super().configure(cnf)
+		kwargs.update(cnf or {})
 		lv = kwargs.get('listvariable')
 		res = super().configure(**kwargs)
 		if lv is not None and hasattr(lv, 'get'):
@@ -186,12 +187,12 @@ class Listbox(_ScrollMixin, Widget):
 	# Public API
 	# ------------------------------------------------------------------
 
-	def insert(self, idx, *elements):
-		"""Insert *elements* at *idx* ('end' or integer)."""
-		if idx in ('end', 'END'):
+	def insert(self, index, *elements):
+		"""Insert *elements* at *index* ('end' or integer)."""
+		if index in ('end', 'END'):
 			pos = len(self._lbItems)
 		else:
-			pos = max(0, min(self._resolveIdx(idx), len(self._lbItems)))
+			pos = max(0, min(self._resolveIdx(index), len(self._lbItems)))
 		n = len(elements)
 		for i, elem in enumerate(elements):
 			self._lbItems.insert(pos + i, elem)
@@ -269,11 +270,11 @@ class Listbox(_ScrollMixin, Widget):
 				self._sel.discard(i)
 		self._markDirty()
 
-	def selectionIncludes(self, idx):
-		return self._resolveIdx(idx) in self._sel
+	def selectionIncludes(self, index):
+		return self._resolveIdx(index) in self._sel
 
-	def selectionAnchor(self, idx):
-		self._anchor = self._resolveIdx(idx)
+	def selectionAnchor(self, index):
+		self._anchor = self._resolveIdx(index)
 
 	selection_set		= selectionSet
 	select_set		= selectionSet
@@ -284,21 +285,21 @@ class Listbox(_ScrollMixin, Widget):
 	selection_anchor	= selectionAnchor
 	select_anchor		= selectionAnchor
 
-	def activate(self, idx):
+	def activate(self, index):
 		"""Set active item."""
 		if self._lbItems:
-			self._active = max(0, min(self._resolveIdx(idx), len(self._lbItems) - 1))
+			self._active = max(0, min(self._resolveIdx(index), len(self._lbItems) - 1))
 		self._markDirty()
 
-	def index(self, idx):
-		"""Return numeric index for *idx*."""
-		if idx in ('end', 'END'):
+	def index(self, index):
+		"""Return numeric index for *index*."""
+		if index in ('end', 'END'):
 			return len(self._lbItems)
-		return self._resolveIdx(idx)
+		return self._resolveIdx(index)
 
-	def see(self, idx):
-		"""Scroll so that item at *idx* is visible."""
-		self._ensureVisible(self._resolveIdx(idx))
+	def see(self, index):
+		"""Scroll so that item at *index* is visible."""
+		self._ensureVisible(self._resolveIdx(index))
 		self._markDirty()
 
 	def nearest(self, y):
@@ -306,11 +307,11 @@ class Listbox(_ScrollMixin, Widget):
 		i = self._scrollY + (_cellY(y) - self._border())
 		return max(0, min(i, len(self._lbItems) - 1))
 
-	def bbox(self, idx):
-		"""Return (x, y, width, height) of item *idx* relative to the widget."""
+	def bbox(self, index):
+		"""Return (x, y, width, height) of item *index* relative to the widget."""
 		bd = self._border()
-		i  = self._resolveIdx(idx) - self._scrollY
-		if 0 <= i < self._visRows() and self._resolveIdx(idx) < len(self._lbItems):
+		i  = self._resolveIdx(index) - self._scrollY
+		if 0 <= i < self._visRows() and self._resolveIdx(index) < len(self._lbItems):
 			return _pxBox((bd, bd + i, self._width - 2*bd, 1))
 		return None
 
@@ -324,9 +325,9 @@ class Listbox(_ScrollMixin, Widget):
 			cfg[k] = v
 		self._markDirty()
 
-	def itemcget(self, idx, option):
+	def itemcget(self, index, option):
 		option = {'background': 'bg', 'foreground': 'fg'}.get(option, option)
-		return self._itemCfg.get(self._resolveIdx(idx), {}).get(option, '')
+		return self._itemCfg.get(self._resolveIdx(index), {}).get(option, '')
 
 	itemconfig = itemconfigure
 
