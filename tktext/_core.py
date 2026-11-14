@@ -16,7 +16,8 @@ import functools
 from . import _colors, _sysclip
 from ._events import Event, KeyEvent, MouseEvent, B1_PRESS, B1_RELEASE, \
 	B1_CLICK, B1_DCLICK, B3_ANY, MOTION, isWheel, keysymOf, \
-	STATE_BUTTON1, STATE_SHIFT, STATE_CONTROL, STATE_ALT, mouseState
+	STATE_BUTTON1, STATE_SHIFT, STATE_CONTROL, STATE_ALT, mouseState, \
+	B2_RELEASE, B3_RELEASE, buttonMask
 
 
 class TclError(ValueError):
@@ -1834,6 +1835,49 @@ class Widget:
 	def _isMapped(self) -> bool:
 		return self._width > 0 and self._height > 0 and not self._destroyed
 
+	# ------------------------------------------------------------------
+	# Raster: a crude RGB image drawn with half-blocks (tktext extension)
+	# ------------------------------------------------------------------
+	_rasterData	= None		# (bytes, width, height)
+	_rasterCache	= None		# renderer cache (see _raster.py)
+
+	def rasterImage(self, data=None, width: int = 0, height: int = 0):
+		"""Show the RGB *data* (width*height*3 bytes) over the widget area
+		inside its border, two pixels per cell (rasterSize() tells the
+		resolution to render at).  Without arguments return the current
+		(data, width, height) or None; b'' clears it."""
+		if data is None:
+			return self._rasterData
+		app = self._getApp()
+		if not data:
+			self._rasterData = None
+			if app is not None:
+				app._rasterWidgets.discard(self)
+		else:
+			if len(data) < width * height * 3:
+				raise TclError(f'raster data too short for {width}x{height}')
+			self._rasterData = (data, int(width), int(height))
+			if app is not None:
+				app._rasterWidgets.add(self)
+		self._rasterCache = None
+		if app is not None:
+			app._dirty = True
+
+	def rasterSize(self):
+		"""@return (cols, 2*rows) pixels of the area a raster covers."""
+		bd = self._border()
+		return (max(0, self._width - 2*bd), 2 * max(0, self._height - 2*bd))
+
+	def _renderRaster(self, scr) -> None:
+		if self._rasterData is None:
+			return
+		app = self._getApp()
+		if app is None:
+			return
+		bd = self._border()
+		app._raster.render(scr, self, self._y + bd, self._x + bd,
+			self._height - 2*bd, self._width - 2*bd)
+
 	def _cfgBorder(self) -> int:
 		"""Configured border width (used for size requests).  In pixel
 		mode a Tk border (a few pixels of 3D relief) is not worth a whole
@@ -2154,6 +2198,14 @@ def _modifierPrefixes(state) -> list:
 	return result
 
 
+def _heldButton(dragging) -> int:
+	"""Button held during a drag: *dragging* is a button number, or a
+	bool for button 1 (the widgets' own drag-selection)."""
+	if dragging is True:
+		return 1
+	return int(dragging or 0)
+
+
 def _mouseEventNames(bstate, dragging) -> list:
 	"""Return the binding names (in firing order) for a curses bstate.
 
@@ -2172,21 +2224,22 @@ def _mouseEventNames(bstate, dragging) -> list:
 def _mouseEventNamesPlain(bstate, dragging) -> list:
 	"""_mouseEventNames() without the modifier prefixes."""
 	names = []
+	held  = _heldButton(dragging)
 	wheel = isWheel(bstate)
 	if wheel < 0:
 		names.append(['<Button-4>', '<ButtonPress-4>', '<4>', '<MouseWheel>'])
 	elif wheel > 0:
 		names.append(['<Button-5>', '<ButtonPress-5>', '<5>', '<MouseWheel>'])
 	if bstate & MOTION and not (bstate & (B1_RELEASE | B1_CLICK | B1_DCLICK)):
-		if dragging:
-			names.append(['<B1-Motion>', '<Motion>'])
+		if held:
+			names.append([f'<B{held}-Motion>', '<Motion>'])
 		else:
 			names.append(['<Motion>'])
 		return names
 	if bstate & B1_DCLICK:
 		names.append(['<Double-Button-1>', '<Double-1>', '<Double-ButtonPress-1>'])
 	if bstate & (B1_PRESS | B1_CLICK):
-		if bstate & B1_PRESS and dragging:
+		if bstate & B1_PRESS and held == 1:
 			names.append(['<B1-Motion>', '<Motion>'])
 		else:
 			names.append(['<Button-1>', '<ButtonPress-1>', '<1>', '<Button>'])
@@ -2194,20 +2247,29 @@ def _mouseEventNamesPlain(bstate, dragging) -> list:
 		names.append(['<ButtonRelease-1>', '<ButtonRelease>'])
 	if bstate & B3_ANY and not (bstate & curses.BUTTON3_RELEASED):
 		names.append(['<Button-3>', '<ButtonPress-3>', '<3>', '<Button>'])
+	if bstate & B3_RELEASE:
+		names.append(['<ButtonRelease-3>', '<ButtonRelease>'])
 	if bstate & (curses.BUTTON2_PRESSED | curses.BUTTON2_CLICKED):
 		names.append(['<Button-2>', '<ButtonPress-2>', '<2>', '<Button>'])
+	if bstate & B2_RELEASE:
+		names.append(['<ButtonRelease-2>', '<ButtonRelease>'])
 	return names
 
 
-def _newMouseEvent(widget, mx, my, bstate):
+def _newMouseEvent(widget, mx, my, bstate, held=0):
+	"""Mouse event for *widget*; *held* is the button held by a button-2/3
+	drag (button 1 drags are known from widget._dragging())."""
 	evt		= MouseEvent(mx, my, bstate)
 	evt.widget	= widget
 	evt.x		= (mx - widget._x) * PX
 	evt.y		= (my - widget._y) * PY
 	evt.x_root	= mx * PX
 	evt.y_root	= my * PY
-	if evt.type == 'Motion' and widget._dragging():
-		evt.state |= STATE_BUTTON1	# <B1-Motion>
+	if evt.type == 'Motion':
+		if held:
+			evt.state |= buttonMask(held)	# <B2-Motion>, <B3-Motion>
+		elif widget._dragging():
+			evt.state |= STATE_BUTTON1	# <B1-Motion>
 	return evt
 
 

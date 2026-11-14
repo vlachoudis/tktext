@@ -428,6 +428,15 @@ WHEEL_UP	= curses.BUTTON4_PRESSED
 WHEEL_DOWN	= getattr(curses, 'BUTTON5_PRESSED', 0x200000)
 MOTION		= curses.REPORT_MOUSE_POSITION
 STATE_BUTTON1	= 0x0100	# Tk Button1Mask
+B2_RELEASE	= curses.BUTTON2_RELEASED
+B3_RELEASE	= curses.BUTTON3_RELEASED
+B23_PRESS	= curses.BUTTON2_PRESSED | curses.BUTTON3_PRESSED
+B23_RELEASE	= B2_RELEASE | B3_RELEASE
+
+
+def buttonMask(num) -> int:
+	"""Tk Button<num>Mask state bit of mouse button 1..5 (0 otherwise)."""
+	return STATE_BUTTON1 << (num - 1) if 1 <= num <= 5 else 0
 
 # curses modifier bits of a mouse event -> Tk state bits
 _MOUSE_MODIFIERS = (
@@ -484,8 +493,13 @@ class MouseEvent(Event):
 			self.type = 'ButtonRelease' if bstate & B1_RELEASE else 'ButtonPress'
 		elif bstate & (curses.BUTTON2_PRESSED | curses.BUTTON2_CLICKED):
 			self.num = 2
+		elif bstate & B2_RELEASE:
+			self.num  = 2
+			self.type = 'ButtonRelease'
 		elif bstate & B3_ANY:
 			self.num = 3
+			if bstate & B3_RELEASE:
+				self.type = 'ButtonRelease'
 		wheel = isWheel(bstate)
 		if wheel:
 			self.num   = 4 if wheel < 0 else 5
@@ -493,5 +507,5 @@ class MouseEvent(Event):
 		if bstate & MOTION and not (bstate & (B1_RELEASE | B1_CLICK)):
 			self.type = 'Motion'
 		# like Tk the release (but not the press) reports the button down
-		if self.type == 'ButtonRelease' and self.num == 1:
-			self.state |= STATE_BUTTON1
+		if self.type == 'ButtonRelease':
+			self.state |= buttonMask(self.num)

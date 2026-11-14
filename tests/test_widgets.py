@@ -138,6 +138,15 @@ class ListboxTest(unittest.TestCase):
 		self.assertEqual(lb.size(), 0)
 		self.assertEqual(lb._scrollY, 0)
 
+	def test_get_curselection(self):
+		# get(curselection()) works in tkinter: Tcl reads (2,) as index 2
+		root, scr = makeApp(30, 8)
+		lb = tk.Listbox(root, height=3); lb.pack()
+		lb.insert('end', 'a', 'b', 'c')
+		lb.selection_set(2)
+		self.assertEqual(lb.get(lb.curselection()), 'c')
+		self.assertEqual(lb.get([1]), 'b')
+
 	def test_scrollbar_inside_border(self):
 		root, scr = makeApp(30, 8)
 		lb = tk.Listbox(root, height=3, width=10); lb.pack()

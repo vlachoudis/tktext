@@ -18,8 +18,10 @@ import atexit
 import curses
 import shutil
 import traceback
+import weakref
 
 from ._colors import ColorManager
+from ._raster import RasterRenderer
 from . import _colors, _termbg
 from ._core import Widget, _fillRect, _addStr, _pad, _mouseEventNames, \
 	_newMouseEvent, _newKeyEvent
@@ -29,6 +31,7 @@ from . import _core
 from ._layout import doPackLayout, doGridLayout, doPlaceLayout
 from ._events import KEY_TAB, KEY_BTAB, KEY_ENTER, KEY_CTRL_C, KEY_CTRL_Z, \
 	Event, MOTION, B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, B3_ANY, isWheel, \
+	B23_PRESS, B23_RELEASE, \
 	decodeEscape, decodeExtended, isModified, ModKey, STATE_CONTROL
 
 
@@ -62,9 +65,12 @@ class Tk(Wm, Frame):
 		self._wmInit()
 		self._title		= 'tktext'
 		self._colors		= ColorManager()
+		self._raster		= RasterRenderer(self._colors)
+		self._rasterWidgets	= weakref.WeakSet()	# widgets with a rasterImage
 		self._scr		= None
 		self._focusWidget	= None
 		self._dragWidget	= None	# widget that owns the current mouse drag
+		self._btnDrag		= None	# (widget, 2|3) of a middle/right button drag
 		self._menuGrab		= False	# a mouse press started inside a menu
 		self._focusLost		= False	# focused widget was destroyed
 		self._quit		= False
@@ -357,6 +363,7 @@ class Tk(Wm, Frame):
 				pass
 			# drag motion and Shift-click reported to the application
 			_termWrite(_MOUSE_MODES_ON)
+			self._raster.start(scr, _termWrite)
 		scr.keypad(True)
 		scr.nodelay(False)
 		self._setCursor(0)
@@ -498,6 +505,7 @@ class Tk(Wm, Frame):
 				self._scr.clear()
 			except curses.error:
 				pass
+			self._raster.invalidate()
 			self._dirty = True
 		elif key == curses.KEY_MOUSE:
 			try:
@@ -878,6 +886,9 @@ class Tk(Wm, Frame):
 
 	def _onMouse(self, mx, my, bstate):
 		self._dirty = True
+		btnDrag     = self._btnDrag
+		if bstate & (B23_RELEASE | B23_PRESS | B1_PRESS) and not bstate & MOTION:
+			self._btnDrag = None	# a release (or a new press) ends it
 		press   = bool(bstate & B1_PRESS) and not (bstate & MOTION)
 		release = bool(bstate & B1_RELEASE)
 		clicked = bool(bstate & (B1_CLICK | B1_DCLICK))
@@ -931,6 +942,19 @@ class Tk(Wm, Frame):
 
 		lastXY        = self._mouseXY
 		self._mouseXY = (mx, my)
+
+		# Button 2/3 drags: curses reports the motion without the button,
+		# like Tk the motion and the release go to the widget of the press
+		if btnDrag is not None and self._dragWidget is None:
+			owner, num = btnDrag
+			if owner._destroyed:
+				self._btnDrag = None
+			elif bstate & MOTION and not (bstate & (B1_PRESS | B1_RELEASE | B1_CLICK)):
+				self._dispatchMouse(owner, mx, my, MOTION, num)
+				return
+			elif bstate & B23_RELEASE:
+				self._dispatchMouse(owner, mx, my, bstate, False)
+				return
 		if self._dragWidget is None and self._grabRedirect(mx, my, bstate, anyDown):
 			return
 		dragging = self._dragWidget is not None
@@ -976,11 +1000,15 @@ class Tk(Wm, Frame):
 
 		if release or clicked:
 			self._dragWidget = None
+		if bstate & B23_PRESS and not bstate & MOTION and \
+				self._dragWidget is None and not target._destroyed:
+			self._btnDrag = (target, 2 if bstate & curses.BUTTON2_PRESSED else 3)
 
 	def _dispatchMouse(self, target, mx, my, bstate, dragging):
 		"""Fire the bindings of a mouse event on *target*, then its class
 		behaviour unless a binding returned 'break'."""
-		evt	= _newMouseEvent(target, mx, my, bstate)
+		held	= dragging if dragging is not True and dragging else 0
+		evt	= _newMouseEvent(target, mx, my, bstate, held)
 		broken	= False
 		for alts in _mouseEventNames(bstate, dragging):
 			_, res = target._dispatchFirst(alts, evt)
@@ -1180,9 +1208,9 @@ class Tk(Wm, Frame):
 			if w._destroyed:
 				continue
 			if geom is not None:
-				x, y, width, height = geom
+				# like winfo_*: pixels in pixel mode
 				w._fireStructure('<Configure>', x=w.winfo_x(), y=w.winfo_y(),
-					width=width, height=height)
+					width=w.winfo_width(), height=w.winfo_height())
 			if (geom is None) != (last is None):
 				if geom is None:
 					w._fireStructure('<Unmap>')
@@ -1221,6 +1249,7 @@ class Tk(Wm, Frame):
 		scr.erase()
 		attr = self._getAttr()
 		_fillRect(scr, 0, 0, self._height, self._width, attr=attr)
+		self._raster.beginFrame(sum(1 for w in self._rasterWidgets if w._isMapped()))
 
 		if self._viewable():
 			self._drawTitleBar(scr, self)
@@ -1259,6 +1288,7 @@ class Tk(Wm, Frame):
 			self._setCursor(0)
 
 		scr.refresh()
+		self._raster.flush(scr)
 
 	def _drawTitleBar(self, scr, owner=None):
 		"""Draw the title (and menubar) of the maximised window *owner*

@@ -166,6 +166,7 @@ class Frame(Widget):
 		# Background fill (Tk always paints a frame's background)
 		if self._color('bg'):
 			_fillRect(scr, self._y, self._x, self._height, self._width, attr=attr)
+		self._renderRaster(scr)
 
 		# Border
 		relief = self._opts.get('relief', 'flat')

@@ -533,7 +533,8 @@ class _Blocker:
 		return None
 
 
-def install(block=(), colors='terminal', theme=None, background='auto'):
+def install(block=(), colors='terminal', theme=None, background='auto',
+		graphics='curses'):
 	"""Make ``import tkinter`` (and its submodules) load tktext.
 
 	Call it before anything imports tkinter.  Modules that need a real Tk
@@ -546,6 +547,9 @@ def install(block=(), colors='terminal', theme=None, background='auto'):
 
 	*background* 'auto' asks the terminal whether it is dark or light;
 	'dark', 'light' or '#rrggbb' tell it (TKTEXT_BACKGROUND overrides).
+
+	*graphics* 'curses', 'truecolor' or 'auto' selects how rasterImage()
+	pictures are drawn (TKTEXT_GRAPHICS overrides).
 
 	*theme* is a dict of theme roles passed to setTheme(), e.g.
 	``{'dialog': ('black', 'cyan'), 'select': ('white', 'blue')}``.
@@ -586,6 +590,9 @@ def install(block=(), colors='terminal', theme=None, background='auto'):
 	setColorMode(_os.environ.get('TKTEXT_COLORS') or colors)
 	from ._termbg import setOverride
 	setOverride(background)
+	from . import _raster
+	_raster.graphicsMode(graphics)		# validate
+	_raster.defaultMode = graphics
 	if theme:
 		setTheme(theme)
 

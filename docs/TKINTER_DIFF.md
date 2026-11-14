@@ -142,3 +142,6 @@ Remaining differences:
 - `Menubutton` shows `▼` by default (`indicatoron=1`), Tk's classic default is 0.
 - X11-only features (visuals, colormaps, `send`, `wm_manage`, embedding with `use`)
   are accepted and ignored.
+- Extension: `widget.rasterImage(data, width, height)` / `widget.rasterSize()` show
+  a crude RGB picture with half-block characters (MANUAL §5.5); tkinter has no
+  equivalent, so check `tk.__name__ == 'tktext'` before using them.

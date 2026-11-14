@@ -484,7 +484,8 @@ class ColorManager:
 		if self._ready:
 			key = self.mapDefaults(fg or '', bg or '')
 			if key not in self._pairs:
-				maxPairs = min(getattr(curses, 'COLOR_PAIRS', 64) - 1, 255)
+				# pairs from _raster.RASTER_FIRST belong to the rasters
+				maxPairs = min(getattr(curses, 'COLOR_PAIRS', 64) - 1, 159)
 				if key == ('', ''):
 					pn = 0
 				elif self._next > maxPairs:

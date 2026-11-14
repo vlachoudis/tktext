@@ -106,6 +106,8 @@ tktext/
   _tcl.py            # widget.tk: emulated Tcl interpreter (call/eval/splitlist, wm, image …)
   _toplevel.py       # Wm mixin (wm_* API) + Toplevel windows
   _image.py          # PhotoImage / BitmapImage (size only; shown as a glyph)
+  _raster.py         # RasterRenderer: widget.rasterImage() RGB pictures as '▀' cells,
+                     # curses (pairs 160-254) or truecolor overlay after refresh
   _canvas.py         # Canvas items on a character grid
   _panedwindow.py    # PanedWindow (tk) / Panedwindow (ttk) with draggable sashes
   _layout.py         # doPackLayout (port of tkPack.c), doGridLayout, doPlaceLayout
@@ -180,6 +182,13 @@ or `ttk.Style().configure('.', background=…)` — with the terminal's own colo
 in `ColorManager.getAttr` → `mapDefaults`.  The foreground is mapped only when the
 background is, so explicit backgrounds (selection, highlights) keep their text colour.
 `'tk'` keeps Tk's light-gray look.
+
+Rasters (`_raster.py`, `TKTEXT_GRAPHICS=curses|truecolor|auto`): Python curses packs the
+pair into 8 bits of the attribute, so UI colours use pairs 1-159 (`ColorManager.getAttr`)
+and rasters 160-254; pair 255 is the truecolor marker.  `Tk._redraw` calls
+`_raster.beginFrame()` before drawing and `_raster.flush(scr)` after `scr.refresh()`;
+flush writes 24-bit cells only where `scr.inch()` still shows the marker (overlays clip
+themselves) and keeps a shadow of what the terminal shows (`invalidate()` on resize).
 
 Toplevels: a normal Toplevel is maximised (own title bar/menubar on row 0), a transient
 one is a framed dialog centred on its master, an override-redirect one is placed exactly.
@@ -288,6 +297,12 @@ events (including motion that drifts outside the widget) are routed to that widg
 `BUTTON1_RELEASED`; `widget._dragging()` tells a widget it owns the drag.  Widgets that
 support drag-selection (Entry, Text) use their own `_mouseDown` flag and `_selAnchor` to
 avoid re-initialising the anchor on terminals that re-send `BUTTON1_PRESSED` on motion.
+
+Middle/right drags use a separate `Tk._btnDrag = (widget, 2|3)`: curses reports drag motion as a
+bare `REPORT_MOUSE_POSITION`, so the app remembers the pressed button and routes the motion as
+`<B2-Motion>`/`<B3-Motion>` (state `Button2Mask`/`Button3Mask`) and `BUTTON2/3_RELEASED` as
+`<ButtonRelease-2/3>` to the press widget.  `_mouseEventNames(bstate, dragging)` takes the held
+button (`True` = 1).  `<Configure>` reports `width`/`height` like `winfo_*` (pixels in pixel mode).
 
 ## Border Relief Values
 

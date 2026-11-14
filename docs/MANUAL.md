@@ -240,7 +240,9 @@ entries act on **release**, like Tk.  Shift-click is passed to the
 application instead of starting the terminal's own text selection, where the
 terminal allows it.  Motion with the button held is reported (xterm mode
 1002) and fires `<B1-Motion>`; a drag released away from the last reported
-position delivers a `<B1-Motion>` there before `<ButtonRelease-1>`.  Motion
+position delivers a `<B1-Motion>` there before `<ButtonRelease-1>`.  Drags
+with the middle or right button fire `<B2-Motion>`/`<B3-Motion>` and
+`<ButtonRelease-2>`/`<ButtonRelease-3>` on the widget that got the press.  Motion
 without a button is not reported, so `<Motion>`/`<Enter>`/`<Leave>` follow
 only clicks and drags.
 
@@ -419,6 +421,34 @@ Entry field background) may become black or white.  Set
 `TERM=xterm-256color` (or your terminal's 256-colour entry) to get the full
 range.
 
+### 5.5 Pixel images (rasters)
+
+Images cannot be shown, but a widget can carry a crude RGB picture, drawn with
+half-block characters `▀`: every cell shows two vertical pixels (foreground =
+top, background = bottom).  This is a tktext extension (not in tkinter):
+
+```python
+cols, rows = frame.rasterSize()        # (columns, 2*rows) inside the border
+frame.rasterImage(rgb, cols, rows)     # bytes, cols*rows*3 (R,G,B per pixel)
+frame.rasterImage()                    # -> (data, width, height) or None
+frame.rasterImage(b'')                 # remove it
+```
+
+The raster covers the area inside the border; the children are drawn on top.
+Data of another size (e.g. before a new picture after a resize) is sampled to
+fit.  Currently `Frame` (and its subclasses) draws rasters.
+
+Graphics modes (`TKTEXT_GRAPHICS`, or `install(graphics=…)`):
+
+| Mode | Drawing |
+|------|---------|
+| `curses` (default) | The colours are reduced to the colour pairs reserved for the rasters (pairs 160–254, shared by the rasters on screen). Python curses can address only 255 pairs, so pictures with many colours are simplified to the nearest of the most frequent colour combinations. |
+| `truecolor` | Curses draws markers; after each refresh the visible markers are overwritten directly on the terminal with 24-bit colours. Menus, dialogs and windows on top are left alone and the cells under them are repainted when they close. Needs a terminal with 24-bit colour. |
+| `auto` | `truecolor` when `$COLORTERM` is `truecolor` or `24bit`, else `curses`. |
+
+Without colours (monochrome terminal) the raster is drawn with the shades
+` ░▒▓█`.
+
 ---
 
 ## 6. Adding your own coloured parts
@@ -462,6 +492,7 @@ or light terminal, to `_BACKGROUND_THEMES['dark']` / `['light']`.
 |----------|--------|--------|
 | `TKTEXT_COLORS` | `terminal`, `tk` | Colour mode in drop-in mode (§5.1) |
 | `TKTEXT_BACKGROUND` | `auto`, `dark`, `light`, `#rrggbb` | Override terminal background detection (§5.2) |
+| `TKTEXT_GRAPHICS` | `curses`, `truecolor`, `auto` | How rasterImage() pictures are drawn (§5.5) |
 | `TKTEXT_CLIPBOARD` | `auto`, `macos`, `windows`, `wayland`, `xclip`, `xsel`, `wsl`, `osc52`, `none` | System clipboard backend (§8) |
 | `TERM` | e.g. `xterm-256color` | Number of colours and key/mouse support |
 | `COLORFGBG` | `fg;bg` | Fallback hint for the background colour |

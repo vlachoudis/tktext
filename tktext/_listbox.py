@@ -353,6 +353,9 @@ class Listbox(_ScrollMixin, Widget):
 	# ------------------------------------------------------------------
 
 	def _resolveIdx(self, idx):
+		# Tcl reads a one element tuple, e.g. curselection(), as that index
+		if isinstance(idx, (tuple, list)) and len(idx) == 1:
+			idx = idx[0]
 		if isinstance(idx, int):
 			return idx
 		s = str(idx)
