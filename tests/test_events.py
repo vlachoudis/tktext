@@ -189,6 +189,31 @@ class MouseTest(unittest.TestCase):
 		self.assertEqual(got[2:], [('press', 0), ('motion', 0x100),
 			('release', 0x100)])
 
+	def test_release_moved_reports_motion(self):
+		# curses drops the motion reported just before a quick release:
+		# a drag release at a new position delivers <B1-Motion> first
+		# (flair InputEditor tab markers are placed labels inside a Text)
+		root, scr = makeApp(30, 12)
+		t   = tk.Text(root); t.pack(fill='both', expand=True)
+		lbl = tk.Label(t, text='V')
+		lbl.place(x=4, y=0)
+		attach(root)
+		got = []
+		lbl.bind('<B1-Motion>',       lambda ev: got.append(('motion', ev.x_root)))
+		lbl.bind('<ButtonRelease-1>', lambda ev: got.append(('release', ev.x_root)))
+		x, y = lbl._x, lbl._y
+		click(root, x, y, 'press')
+		click(root, x + 2, y, 'motion')
+		click(root, x + 5, y, 'release')
+		self.assertEqual(got, [('motion', x + 2), ('motion', x + 5),
+			('release', x + 5)])
+		# released where the last motion was: no extra motion
+		del got[:]
+		click(root, x, y, 'press')
+		click(root, x + 1, y, 'motion')
+		click(root, x + 1, y, 'release')
+		self.assertEqual(got, [('motion', x + 1), ('release', x + 1)])
+
 	def test_mouse_state_modifiers(self):
 		import curses
 		from tktext._events import mouseState

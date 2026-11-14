@@ -32,10 +32,13 @@ from ._events import KEY_TAB, KEY_BTAB, KEY_ENTER, KEY_CTRL_C, KEY_CTRL_Z, \
 	decodeEscape, decodeExtended, isModified
 
 
-# xterm XTSHIFTESCAPE (CSI > Ps s): 1 = send Shift-click to the
-# application, 0 = Shift overrides mouse reporting (the default)
-_SHIFT_MOUSE_ON		= b'\x1b[>1s'
-_SHIFT_MOUSE_OFF	= b'\x1b[>0s'
+# Written after curses.mousemask(), which enables only the press/release
+# tracking (?1000): ?1002 also reports the motion with a button held
+# (<B1-Motion>), the last ?100x set wins.  xterm XTSHIFTESCAPE (CSI > Ps s):
+# 1 = send Shift-click to the application, 0 = Shift overrides mouse
+# reporting (the default)
+_MOUSE_MODES_ON		= b'\x1b[?1002h\x1b[>1s'
+_MOUSE_MODES_OFF	= b'\x1b[>0s\x1b[?1002l'
 
 
 def _termWrite(data: bytes):
@@ -225,7 +228,7 @@ class Tk(Wm, Frame):
 		self._running	= False
 		self._postedMenus.clear()
 		self._postedDialogs.clear()
-		_termWrite(_SHIFT_MOUSE_OFF)
+		_termWrite(_MOUSE_MODES_OFF)
 		try:
 			if scr is not None:
 				scr.keypad(False)
@@ -345,9 +348,8 @@ class Tk(Wm, Frame):
 					curses.REPORT_MOUSE_POSITION)
 			except curses.error:
 				pass
-			# xterm XTSHIFTESCAPE: report Shift-click to the application
-			# instead of using it for the terminal's own selection
-			_termWrite(_SHIFT_MOUSE_ON)
+			# drag motion and Shift-click reported to the application
+			_termWrite(_MOUSE_MODES_ON)
 		scr.keypad(True)
 		scr.nodelay(False)
 		self._setCursor(0)
@@ -444,15 +446,15 @@ class Tk(Wm, Frame):
 		control would, and restore the screen when it is continued."""
 		if not self._ownScreen or not hasattr(signal, 'SIGTSTP'):
 			return
-		_termWrite(_SHIFT_MOUSE_OFF)
+		_termWrite(_MOUSE_MODES_OFF)
 		try:
 			curses.endwin()
 		except curses.error:
 			pass
 		os.kill(os.getpid(), signal.SIGTSTP)
 		# continued (SIGCONT): refresh() returns curses to program mode
-		_termWrite(_SHIFT_MOUSE_ON)
 		self._scr.refresh()
+		_termWrite(_MOUSE_MODES_ON)
 		self._update(force=True)
 
 	def _onInterrupt(self):
@@ -918,6 +920,7 @@ class Tk(Wm, Frame):
 				self._menuGrab = False
 			return
 
+		lastXY        = self._mouseXY
 		self._mouseXY = (mx, my)
 		if self._dragWidget is None and self._grabRedirect(mx, my, bstate, anyDown):
 			return
@@ -930,6 +933,11 @@ class Tk(Wm, Frame):
 			if target._destroyed:
 				self._dragWidget = None
 				return
+			if release and (mx, my) != lastXY:
+				# curses drops a motion followed quickly by the release
+				self._dispatchMouse(target, mx, my, MOTION, True)
+				if target._destroyed or self._dragWidget is not target:
+					return
 		else:
 			win = self._windowAt(mx, my)
 			if win is None:
@@ -955,6 +963,14 @@ class Tk(Wm, Frame):
 			# press or a motion without buttons held
 			target._pointerAt(mx, my)
 
+		self._dispatchMouse(target, mx, my, bstate, dragging)
+
+		if release or clicked:
+			self._dragWidget = None
+
+	def _dispatchMouse(self, target, mx, my, bstate, dragging):
+		"""Fire the bindings of a mouse event on *target*, then its class
+		behaviour unless a binding returned 'break'."""
 		evt	= _newMouseEvent(target, mx, my, bstate)
 		broken	= False
 		for alts in _mouseEventNames(bstate, dragging):
@@ -972,9 +988,6 @@ class Tk(Wm, Frame):
 
 		if not broken and not target._destroyed:
 			target._handleMouse(mx, my, bstate)
-
-		if release or clicked:
-			self._dragWidget = None
 
 	def _grabRedirect(self, mx, my, bstate, anyDown) -> bool:
 		"""Tk grab semantics: a mouse event outside the grab window's tree

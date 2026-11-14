@@ -26,10 +26,11 @@ def mouseClick(x, y):
 	return [f'\x1b[<0;{x + 1};{y + 1}M', f'\x1b[<0;{x + 1};{y + 1}m']
 
 
-def runInPty(argv, keys, cols=110, rows=36, delay=0.15, timeout=10.0):
+def runInPty(argv, keys, cols=110, rows=36, delay=0.15, timeout=10.0,
+		term='xterm-256color'):
 	pid, fd = pty.fork()
 	if pid == 0:
-		os.environ['TERM'] = 'xterm-256color'
+		os.environ['TERM'] = term
 		os.chdir(ROOT)
 		os.execvp(argv[0], argv)
 	fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
@@ -119,6 +120,37 @@ class TerminalTest(unittest.TestCase):
 		self.assertGreater(end, 0)
 		for text in ('PRINTED-STDOUT', 'PRINTED-STDERR', 'FD2-STDERR'):
 			self.assertGreater(out.find(text), end, text)
+
+	def test_drag_motion(self):
+		"""curses enables only the press/release mouse tracking: tktext
+		turns on ?1002 so that <B1-Motion> fires while dragging (flair
+		InputEditor tab markers), in the SGR and in the X10 encoding."""
+		script = ('import sys; sys.path.insert(0, %r)\n'
+			'import tktext as tk\n'
+			'root = tk.Tk()\n'
+			'lbl = tk.Label(root, text="V")\n'
+			'lbl.place(x=4, y=2)\n'
+			'got = []\n'
+			'lbl.bind("<Button-1>", lambda e: got.append("press"))\n'
+			'lbl.bind("<B1-Motion>", lambda e: got.append(e.x_root))\n'
+			'lbl.bind("<ButtonRelease-1>", lambda e: root.after(100, root.quit))\n'
+			'root.mainloop()\n'
+			'print("GOT", got)\n') % ROOT
+		x10 = lambda b, x, y: '\x1b[M' + chr(32 + b) + chr(33 + x) + chr(33 + y)
+		for term, seq in (
+				('xterm-256color', lambda b, x, y, up='M':
+					f'\x1b[<{b};{x + 1};{y + 1}{up}'),
+				('screen-256color', lambda b, x, y, up='M':
+					x10(3 if up == 'm' else b, x, y))):
+			with self.subTest(term=term):
+				keys = [seq(0, 4, 3), seq(32, 6, 3), seq(32, 9, 3),
+					seq(0, 9, 3, 'm')]
+				code, out = runInPty([sys.executable, '-c', script], keys,
+					term=term)
+				self.assertEqual(code, 0)
+				self.assertGreater(out.find('\x1b[?1002h'),
+					out.find('1000h'))
+				self.assertIn("GOT ['press', 6, 9]", out)
 
 
 def queryInPty(reply, timeout=5.0):

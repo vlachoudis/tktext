@@ -53,7 +53,7 @@ from ._combobox    import Combobox
 from ._scrollbar   import Scrollbar
 from ._misc        import Separator, Progressbar
 from ._events      import Event
-from ._colors      import setTheme, resetTheme, getTheme
+from ._colors      import setTheme, resetTheme, getTheme, getBackground, isDefaultColor
 from ._termbg      import terminalBackground, isDarkTerminal
 from . import ttk
 

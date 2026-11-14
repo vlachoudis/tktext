@@ -238,7 +238,11 @@ The mouse works when the terminal reports it (xterm, gnome-terminal,
 konsole, kitty, tmux with `mouse on` …).  Buttons, check buttons and menu
 entries act on **release**, like Tk.  Shift-click is passed to the
 application instead of starting the terminal's own text selection, where the
-terminal allows it.
+terminal allows it.  Motion with the button held is reported (xterm mode
+1002) and fires `<B1-Motion>`; a drag released away from the last reported
+position delivers a `<B1-Motion>` there before `<ButtonRelease-1>`.  Motion
+without a button is not reported, so `<Motion>`/`<Enter>`/`<Leave>` follow
+only clicks and drags.
 
 ### Errors in callbacks
 
