@@ -480,6 +480,9 @@ or light terminal, to `_BACKGROUND_THEMES['dark']` / `['light']`.
 * The terminal runs in raw mode: Ctrl-C, Ctrl-Z, Ctrl-\\, Ctrl-S and Ctrl-Q are
   keys (`<Control-c>` …), not signals or flow control.  Unbound, Ctrl-C closes
   the active window (cancels a dialog or menu) and Ctrl-Z suspends the program.
+  Enter (CR) and Ctrl-J (LF) are told apart: Ctrl-J is `<Control-j>`, not
+  `<Return>`.  Ctrl-H, Ctrl-I and Ctrl-M are BackSpace, Tab and Return unless
+  the terminal reports them with modifyOtherKeys / kitty.
 * Clipboard: `clipboard_append()` / `clipboard_get()` keep one buffer per
   `type=` like Tk (`selection_get(type='TARGETS')` lists them).  The text format
   (`STRING`) is also copied to the system clipboard and read back from it, so

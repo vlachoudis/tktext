@@ -426,6 +426,8 @@ class ModifiedKeyTest(unittest.TestCase):
 		k = decodeEscape('[13:13;5:1u')			# kitty sub-parameters
 		self.assertEqual((int(k), k.state), (10, STATE_CONTROL))
 		self.assertEqual(decodeEscape('[97;5u'), 1)	# Control-a
+		k = decodeEscape('[106;5u')			# Control-j, not Return
+		self.assertEqual((int(k), k.state), (ord('j'), STATE_CONTROL))
 		k = decodeEscape('[65;6u')			# Control-Shift-a
 		self.assertEqual((int(k), k.state), (65, STATE_CONTROL | STATE_SHIFT))
 		self.assertEqual(decodeEscape('[9;2u'), 353)	# Shift-Tab
@@ -460,6 +462,13 @@ class ModifiedKeyTest(unittest.TestCase):
 		t.bind('<Key>', lambda e: seen.append((e.keysym, e.state)) or 'break')
 		self.feed(root, scr, '\x1b[5$x\x1b[b')
 		self.assertEqual(seen, [('Prior', 1), ('x', 0), ('Down', 1)])
+
+	def test_ctrl_j_is_not_return(self):
+		# nonl(): Enter arrives as CR, LF is Ctrl-J (flair: move card down)
+		from tktext._events import KeyEvent, ModKey, STATE_CONTROL
+		e = KeyEvent(ModKey(ord('j'), STATE_CONTROL))
+		self.assertEqual(e.patterns()[0], '<Control-j>')
+		self.assertNotIn('<Return>', e.patterns())
 
 	def test_uppercase_letter_has_shift_state(self):
 		# like Tk: 'J' is reported with the Shift bit (flair: Shift-j

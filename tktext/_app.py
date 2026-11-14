@@ -29,7 +29,7 @@ from . import _core
 from ._layout import doPackLayout, doGridLayout, doPlaceLayout
 from ._events import KEY_TAB, KEY_BTAB, KEY_ENTER, KEY_CTRL_C, KEY_CTRL_Z, \
 	Event, MOTION, B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, B3_ANY, isWheel, \
-	decodeEscape, decodeExtended, isModified
+	decodeEscape, decodeExtended, isModified, ModKey, STATE_CONTROL
 
 
 # Written after curses.mousemask(), which enables only the press/release
@@ -326,6 +326,7 @@ class Tk(Wm, Frame):
 		self._scr		= scr
 		self._running		= True
 		self._pendingKeys	= []	# read ahead while decoding escapes
+		self._lfIsCtrlJ		= False	# nonl(): Enter is CR, Ctrl-J is LF
 		# how long a clicked Button stays pressed (no delay on a fake screen)
 		self._pressDelay	= 0.1 if initCurses else 0.0
 		if initCurses:
@@ -336,6 +337,12 @@ class Tk(Wm, Frame):
 			try:
 				curses.raw()
 				curses.noecho()
+			except curses.error:
+				pass
+			# no CR->LF input translation: Enter sends CR, Ctrl-J sends LF
+			try:
+				curses.nonl()
+				self._lfIsCtrlJ = True
 			except curses.error:
 				pass
 			if hasattr(curses, 'set_escdelay'):
@@ -395,6 +402,8 @@ class Tk(Wm, Frame):
 		key = scr.getch()
 		if key == 27:
 			return self._readEscape(scr)
+		if key == 10 and self._lfIsCtrlJ:
+			return ModKey(ord('j'), STATE_CONTROL)
 		if key > 0x1ff:
 			try:
 				name = curses.keyname(key).decode()

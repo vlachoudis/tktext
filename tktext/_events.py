@@ -270,7 +270,10 @@ def _otherKey(code, mod):
 		# reports Control-Shift-a as Control-A)
 		if bits & 1:
 			return ModKey(ord(chr(code).upper()), STATE_CONTROL | STATE_SHIFT)
-		return ord(chr(code).lower()) & 0x1f
+		ctrl = ord(chr(code).lower()) & 0x1f
+		if ctrl in _NOT_CONTROL:	# Control-h/i/j/m are not BackSpace/Tab/Return
+			return ModKey(ord(chr(code).lower()), STATE_CONTROL)
+		return ctrl
 	if bits == 1:
 		if key == 9:
 			return 353			# Shift-Tab → BackTab
