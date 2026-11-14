@@ -413,6 +413,20 @@ class WidgetCompatTest(unittest.TestCase):
 		with self.assertRaises(tk.TclError):
 			pw.sash_coord(1)
 
+	def test_paned_window_pane_width_overrides_request(self):
+		# flair restores its splitters with add(frame, width=saved):
+		# like Tk the pane width replaces the (larger) requested width
+		root, scr = makeApp(60, 8)
+		pw = tk.PanedWindow(root, orient='horizontal')
+		pw.pack(fill='both', expand=True)
+		left  = tk.Label(pw, text='A very long label that requests a lot')
+		right = tk.Label(pw, text='RIGHT')
+		pw.add(left, width=10)
+		pw.add(right)
+		attach(root)
+		self.assertEqual(left._width, 10)
+		self.assertEqual(pw.sash_coord(0), (10, 0))
+
 	def test_toplevel_tcl_shim(self):
 		root, scr = makeApp()
 		top = tk.Toplevel(root)

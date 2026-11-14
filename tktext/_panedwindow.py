@@ -198,12 +198,13 @@ class PanedWindow(Frame):
 	# ------------------------------------------------------------------
 
 	def _paneReq(self, child):
+		# like Tk an explicit pane width/height replaces the requested size
 		w, h = child._preferredSize()
 		info = child._geoInfo
 		if info.get('width'):
-			w = max(w, _cellsX(info['width']))
+			w = _cellsX(info['width'])
 		if info.get('height'):
-			h = max(h, _cellsY(info['height']))
+			h = _cellsY(info['height'])
 		return (w, h) if self._horizontal() else (h, w)
 
 	def _preferredSize(self):

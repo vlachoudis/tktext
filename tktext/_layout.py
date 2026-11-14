@@ -266,20 +266,19 @@ def _gridMinSizes(children, rowCfg, colCfg):
 		if 0 <= r < nRows:
 			minRowH[r] = max(minRowH[r], int(cfg.get('minsize', 0) or 0))
 
-	# Single-span widgets first, then spanning widgets grow the spanned
-	# cells (extra goes to weighted cells, else to the last one).
-	ordered = sorted(children, key=lambda wo: (wo[1].get('columnspan', 1),
-		wo[1].get('rowspan', 1)))
-	for widget, opts in ordered:
-		r  = opts['row']
-		c  = opts['column']
-		rs = opts.get('rowspan', 1)
-		cs = opts.get('columnspan', 1)
+	# Like Tk, each dimension separately: single-span widgets first, then
+	# spanning widgets grow the spanned cells (extra goes to weighted
+	# cells, else to the last one).
+	sizes = []
+	for widget, opts in children:
 		pw, ph = widget._preferredSize()
 		pw += _ipad(opts.get('ipadx', 0)) + _p(opts.get('padx', 0))
 		ph += _ipad(opts.get('ipady', 0)) + _p(opts.get('pady', 0))
-		_growSpan(minColW, c, cs, pw, colCfg)
-		_growSpan(minRowH, r, rs, ph, rowCfg)
+		sizes.append((opts, pw, ph))
+	for opts, pw, ph in sorted(sizes, key=lambda s: s[0].get('columnspan', 1)):
+		_growSpan(minColW, opts['column'], opts.get('columnspan', 1), pw, colCfg)
+	for opts, pw, ph in sorted(sizes, key=lambda s: s[0].get('rowspan', 1)):
+		_growSpan(minRowH, opts['row'], opts.get('rowspan', 1), ph, rowCfg)
 	return minColW, minRowH
 
 

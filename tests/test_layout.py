@@ -109,6 +109,24 @@ class GridTest(unittest.TestCase):
 		attach(root)
 		self.assertEqual(lbl._y, 5)
 
+	def test_spans_resolved_per_dimension(self):
+		# flair's Geometry "Selection" group: a 2-row icon next to a
+		# columnspan=3 row must not make the grid 4 rows high
+		root, scr = makeApp(40, 10)
+		f = tk.Frame(root); f.grid(row=0, column=0, sticky='nw')
+		for i in range(3):
+			f.grid_rowconfigure(i, weight=1)
+		icon = tk.Frame(f, width=5, height=2)
+		icon.grid(row=0, column=0, rowspan=2, sticky='nsew')
+		lock = tk.Label(f, text='Lock')
+		lock.grid(row=0, column=1, columnspan=3, sticky='nsew')
+		tk.Label(f, text='Freeze').grid(row=1, column=1)
+		vis = tk.Label(f, text='Visibility')
+		vis.grid(row=2, column=0)
+		attach(root)
+		self.assertEqual(f.winfo_reqheight(), 3)
+		self.assertEqual((icon._height, vis._y - f._y), (2, 2))
+
 
 	def test_abbreviated_options(self):
 		# Tk accepts unique abbreviations: flair grids with stick=NSEW
