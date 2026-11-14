@@ -1370,7 +1370,7 @@ class Text(_ScrollMixin, Widget):
 		if '\t' not in line[start:end]:
 			return None
 		ekey = self._elideKey()
-		key  = (self._version, ekey, self._tabKey())
+		key  = (self._version, ekey, self._tabKey(), self._marginKey())
 		if getattr(self, '_xsCacheKey', None) != key:
 			self._xsCacheKey = key
 			self._xsCache    = {}
@@ -1380,11 +1380,14 @@ class Text(_ScrollMixin, Widget):
 		rng  = self._elideMap().get(r) if ekey else None
 		hide = (lambda c: any(lo <= c < hi for lo, hi in rng)) if rng \
 			else (lambda c: False)
+		# tab stops are measured from the left edge of the text area like
+		# Tk, so the layout starts at the left margin of the display line
+		m    = self._segMargin((r, start, end))
 		xs   = [0] * (end - start + 1)
-		x    = 0
+		x    = m
 		ntab = 0
 		for k, c in enumerate(range(start, end)):
-			xs[k] = x
+			xs[k] = x - m
 			if hide(c):
 				continue
 			if line[c] != '\t':
@@ -1412,7 +1415,7 @@ class Text(_ScrollMixin, Widget):
 				else:			# numeric: align on the decimal point
 					stop -= w if dot is None else dot
 			x += max(1, stop - x)
-		xs[-1] = x
+		xs[-1] = x - m
 		if len(self._xsCache) > 4096:
 			self._xsCache.clear()
 		self._xsCache[(r, start, end)] = xs
@@ -1704,7 +1707,7 @@ class Text(_ScrollMixin, Widget):
 		else:
 			text = line
 		parts = text.split('\t')
-		x     = 0
+		x     = m		# tab stops are measured from the text area edge
 		for n in range(len(parts) - 1):
 			x += len(parts[n])
 			if not stops:
@@ -1725,7 +1728,7 @@ class Text(_ScrollMixin, Widget):
 					dot   = parts[n + 1].find('.')
 					stop -= w if dot < 0 else dot
 			x += max(1, stop - x)
-		return m + x + len(parts[-1])
+		return x + len(parts[-1])
 
 	def _contentWidth(self) -> int:
 		"""Width of the longest row.  The row widths are cached (and

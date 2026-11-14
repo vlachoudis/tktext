@@ -506,6 +506,17 @@ class TextMarginTest(unittest.TestCase):
 		self.assertEqual(self.row(scr, t, 0), '  ' + 'aaaaaaaaaabbbbbbbbbbcccccc'[:w - 2])
 		self.assertTrue(self.row(scr, t, 1).startswith('      '))
 
+	def test_tab_stops_ignore_margin(self):
+		# like Tk the tab stops are fixed from the text area edge
+		root, scr, t = makeText('a\tb\nab\tc', wrap='none')
+		t.tag_configure('ind', lmargin1=3)
+		t.tag_add('ind', '2.0', '3.0')
+		root._update(force=True)
+		self.assertEqual(self.row(scr, t, 0), 'a       b')
+		self.assertEqual(self.row(scr, t, 1), '   ab   c')
+		self.assertEqual(t.bbox('2.3')[0], 1 + 8)
+		self.assertEqual(t._rowWidth(1, t._margins()), 9)
+
 	def test_margin_after_elided_prefix(self):
 		# flair InputPage: {elided id}{indented text}
 		root, scr, t = makeText('12345card')
