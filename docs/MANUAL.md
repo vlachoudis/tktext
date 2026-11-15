@@ -284,7 +284,11 @@ TKTEXT_COLORS=tk python myapp.py
 
 Colours registered by the program with `tk_setPalette()` or
 `ttk.Style().configure('.', background=…)` are also treated as defaults in
-`terminal` mode.
+`terminal` mode.  In this mode `ttk.Style().lookup()` of `background`,
+`foreground` and `insertcolor` (when not configured by the program) reports
+the terminal's colours: the detected background (or black/white) and
+white/black text, so programs that derive a dark or light palette from the
+theme see what is on the screen.
 
 ### 5.2 Dark or light terminal
 

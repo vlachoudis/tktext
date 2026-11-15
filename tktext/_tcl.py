@@ -347,25 +347,8 @@ def _treeSelectOp(tcl, widget, item, *args):
 	tv   = tcl._widget(widget)
 	op   = str(args[-1]) if args else 'choose'
 	item = str(item)
-	if not item:
-		return ''
-	if op == 'toggle':
-		if item in tv.selection():
-			tv.selection_remove(item)
-		else:
-			tv.selection_add(item)
-	elif op == 'extend':
-		order  = [iid for iid, _ in tv._getFlat()]
-		anchor = tv.focus() or item
-		if anchor in order and item in order:
-			a, b = sorted((order.index(anchor), order.index(item)))
-			tv.selection_set(order[a:b + 1])
-		else:
-			tv.selection_set(item)
-	else:
-		tv.selection_set(item)
-	tv.focus(item)
-	tv.see(item)
+	if item:
+		tv._selectOp(item, op)
 	return ''
 
 

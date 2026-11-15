@@ -196,6 +196,39 @@ class TreeviewTest(unittest.TestCase):
 		self.assertEqual(len(tv.selection()), 1)
 		self.assertEqual(tv.item(tv.selection()[0], 'text'), 'file')
 
+	def _flatTree(self):
+		root, scr = makeApp(40, 12)
+		tv    = tk.Treeview(root, show='tree', height=8)
+		items = [tv.insert('', 'end', text=f'i{i}') for i in range(6)]
+		tv.pack()
+		attach(root)
+		return root, tv, items
+
+	def test_drag_extend_keeps_anchor(self):
+		# like tkExtra.Treeview.b1motion: B1-Motion extends from the focus
+		root, tv, items = self._flatTree()
+		def motion(event):
+			tv.tk.call('ttk::treeview::Select', tv._w, event.x, event.y, 'extend')
+			return 'break'
+		tv.bind('<B1-Motion>', motion)
+		y = tv._dataY()
+		click(root, tv._x + 2, y + 1, 'press')
+		for i in range(2, 5):
+			click(root, tv._x + 2, y + i, 'motion')
+		self.assertEqual(tv.selection(), tuple(items[1:5]))
+		self.assertEqual(tv.focus(), items[1])
+
+	def test_shift_and_control_click(self):
+		root, tv, items = self._flatTree()
+		x, y = tv._x + 2, tv._dataY()
+		click(root, x, y + 1)
+		root._onMouse(x, y + 4, curses.BUTTON1_CLICKED | curses.BUTTON_SHIFT)
+		self.assertEqual(tv.selection(), tuple(items[1:5]))
+		root._onMouse(x, y + 2, curses.BUTTON1_CLICKED | curses.BUTTON_CTRL)
+		self.assertEqual(tv.selection(), (items[1], items[3], items[4]))
+		click(root, x, y + 5)
+		self.assertEqual(tv.selection(), (items[5],))
+
 	def test_cells_clipped_to_widget(self):
 		root, scr = makeApp(30, 8)
 		tv = tk.Treeview(root, columns=('a', 'b'), width=12, height=3)

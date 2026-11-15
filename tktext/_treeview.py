@@ -16,7 +16,8 @@ from ._core import TclError, Widget, _addStr, _fillRect, _drawBorder, _pad, _int
 from ._listbox import _ScrollMixin
 from ._events import (KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT,
 	KEY_HOME, KEY_END, KEY_PPAGE, KEY_NPAGE, KEY_ENTER, KEY_SPACE,
-	B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, MOTION, isWheel)
+	B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, MOTION, isWheel,
+	mouseState, STATE_SHIFT, STATE_CONTROL)
 
 
 def _flatten(items):
@@ -786,6 +787,25 @@ class Treeview(_ScrollMixin, Widget):
 			self._setSelection([iid])
 		self._markDirty()
 
+	def _selectOp(self, iid, op):
+		"""Tk ttk::treeview::SelectOp: like Tk only 'choose' moves the
+		focus, the focus is the anchor of 'extend' (drag/Shift-click)"""
+		mode = self._opts.get('selectmode', 'extended')
+		if mode == 'none':
+			return
+		order = [i for i, _ in self._getFlat()]
+		if mode != 'extended' or op == 'choose' or \
+				(op == 'extend' and self._focusIid not in order):
+			self._focusIid = iid
+			self._setSelection([iid])
+		elif op == 'toggle':
+			Treeview.selectionToggle(self, iid)
+		elif op == 'extend' and iid in order:
+			a, b = sorted((order.index(self._focusIid), order.index(iid)))
+			self._setSelection(order[a:b + 1])
+		Treeview.see(self, iid)
+		self._markDirty()
+
 	def _handleKey(self, key):
 		flat = self._getFlat()
 		if not flat:
@@ -904,5 +924,11 @@ class Treeview(_ScrollMixin, Widget):
 		if '#0' in self._colList()[:1] and markerX <= mx < markerX + 2 and \
 				self._treeItems[iid]['children']:
 			self._toggle(iid)
-		self._selectRow(iid)
+		state = mouseState(bstate)
+		if state & STATE_SHIFT:
+			self._selectOp(iid, 'extend')
+		elif state & STATE_CONTROL:
+			self._selectOp(iid, 'toggle')
+		else:
+			self._selectOp(iid, 'choose')
 		return True

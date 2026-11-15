@@ -549,6 +549,29 @@ class ColorModeTest(unittest.TestCase):
 		self.assertEqual(a, b)
 		self.assertEqual(pairs[a >> 8][1], -1)
 
+	def test_style_lookup_reports_terminal_colours(self):
+		# flair's tkExtra.setTheme() derives `dark` from the '.' colours
+		from tktext import ttk, _termbg
+		savedBg       = self.colors.getBackground()
+		savedSettings = dict(ttk.Style._settings)
+		ttk.Style._settings.clear()
+		try:
+			_termbg.setOverride('#202020')
+			self.colors.setBackground(None)
+			s = ttk.Style()
+			self.assertEqual(s.lookup('.', 'background'), '#202020')
+			self.assertEqual(s.lookup('TLabel', 'foreground'), '#ffffff')
+			self.assertEqual(self.cm.mapDefaults('#ffffff', '#202020'), ('', ''))
+			_termbg.setOverride('light')
+			self.assertEqual(s.lookup('.', 'background'), '#ffffff')
+			self.assertEqual(s.lookup('.', 'foreground'), '#000000')
+			self.colors.setColorMode('tk')
+			self.assertEqual(s.lookup('.', 'background'), '#d9d9d9')
+		finally:
+			_termbg.setOverride('auto')
+			self.colors.setBackground(savedBg)
+			ttk.Style._settings.update(savedSettings)
+
 	def test_tk_mode_unchanged(self):
 		self.colors.setColorMode('tk')
 		self.assertEqual(self.cm.mapDefaults('black', '#d9d9d9'),

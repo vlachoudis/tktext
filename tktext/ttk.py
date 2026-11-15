@@ -28,6 +28,7 @@ from ._menu      import OptionMenu as _OptionMenu
 from ._menubutton import Menubutton
 from ._misc      import Separator, Progressbar
 from ._panedwindow import Panedwindow
+from . import _colors, _termbg
 from ._core      import Widget as _Widget
 from ._core import _initArgs
 
@@ -95,6 +96,7 @@ class Style:
 		'lightcolor':		'#ffffff',
 		'darkcolor':		'#c3c3c3',
 	}
+	_TERMINAL = ('background', 'foreground', 'insertcolor')
 
 	def __init__(self, master=None):
 		pass
@@ -121,7 +123,28 @@ class Style:
 		for s in (style, '.'):
 			if option in Style._settings.get(s, {}):
 				return Style._settings[s][option]
+		if option in Style._TERMINAL and _colors.colorMode() == 'terminal':
+			return Style._terminalColor(option)
 		return Style._DEFAULT.get(option, default)
+
+	@staticmethod
+	def _terminalColor(option):
+		"""In 'terminal' colour mode the default background/foreground are
+		drawn with the terminal's own colours: report them (the detected
+		background or black/white) so that programs deriving a dark/light
+		palette from the theme see what is on the screen."""
+		kind = _colors.getBackground()
+		dark = kind == 'dark' if kind else _termbg.isDarkTerminal()
+		if option == 'background':
+			rgb = _termbg.terminalBackground()
+			if rgb is None or _termbg.isDark(rgb) != dark:
+				rgb = (0, 0, 0) if dark else (255, 255, 255)
+			color = '#%02x%02x%02x' % rgb
+			_colors.addDefaultColors(color, ())
+		else:
+			color = '#ffffff' if dark else '#000000'
+			_colors.addDefaultColors((), color)
+		return color
 
 	def layout(self, style, layoutspec=None):
 		return []
