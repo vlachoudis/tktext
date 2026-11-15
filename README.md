@@ -39,7 +39,7 @@ package on `PYTHONPATH` (or next to your program).
 ```bash
 git clone <repository> tktext
 cd tktext
-python3 demo.py
+python3 examples/demo.py
 ```
 
 ---
@@ -84,7 +84,7 @@ editor, scale, spinbox, combobox, check/radio buttons, option menu, popup
 menus with cascades and modal dialogs.
 
 ```bash
-python3 demo.py
+python3 examples/demo.py
 ```
 
 ![demo.py](docs/images/demo.png)
