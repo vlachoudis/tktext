@@ -1,5 +1,6 @@
 import curses
 import os
+import sys
 import tempfile
 import unittest
 
@@ -8,6 +9,9 @@ import tktext.messagebox as messagebox
 import tktext.filedialog as filedialog
 from tktext import ttk
 import tktext
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+	os.path.abspath(__file__))), 'examples'))
 
 
 class LabelButtonTest(unittest.TestCase):

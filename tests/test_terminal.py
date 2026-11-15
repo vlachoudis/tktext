@@ -82,7 +82,7 @@ class TerminalTest(unittest.TestCase):
 		keys += mouseClick(5, 32) + [DOWN, DOWN, RIGHT, ENTER]	# popup menu
 		keys += mouseClick(48, 3)				# Widgets tab
 		keys += ['RESIZE', ESC, '\x1b[21~']		# F10 quits the demo
-		code, out = runInPty([sys.executable, 'demo.py'], keys)
+		code, out = runInPty([sys.executable, 'examples/demo.py'], keys)
 		self.assertNotIn('Traceback', out)
 		self.assertEqual(code, 0)
 
