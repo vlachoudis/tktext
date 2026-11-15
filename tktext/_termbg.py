@@ -30,7 +30,7 @@ except ImportError:		# not POSIX
 
 from ._colors import _BASIC_RGB
 
-QUERY_TIMEOUT	= 0.15		# seconds to wait for the terminal's reply
+QUERY_TIMEOUT	= 0.5		# seconds to wait for the terminal's reply (DA1 ends it earlier)
 
 _override	= 'auto'	# install(background=…): 'auto', 'dark', 'light', '#rrggbb'
 _cached		= False		# detection done

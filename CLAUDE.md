@@ -222,7 +222,7 @@ Dark/light terminal (`_termbg.py`): `terminalBackground()` → `(r,g,b)` or None
 `isDarkTerminal()` (unknown → dark).  Order: `TKTEXT_BACKGROUND` env
 (`dark|light|#rrggbb|auto`) / `install(background=…)` → `TERM=linux` (dark) →
 OSC 11 query on `/dev/tty` (followed by DA1 so non-supporting terminals answer at
-once; 150 ms timeout) → `$COLORFGBG` → None.  The query reads the tty, so it only
+once; 0.5 s timeout; a later reply is swallowed by `Tk._readOsc`) → `$COLORFGBG` → None.  The query reads the tty, so it only
 runs in `Tk._startScreen()` **before** `curses.initscr()` (never with a fake
 screen).  `Tk._adaptTheme()` then calls `_colors.setBackground('dark'|'light')`
 ('light' when pixel mode draws Tk's gray, i.e. colour mode 'tk'), which applies the

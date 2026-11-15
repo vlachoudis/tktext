@@ -299,7 +299,7 @@ start-up it finds out the background in this order:
 1. `TKTEXT_BACKGROUND` environment variable, or `install(background=…)`:
    `dark`, `light`, `#rrggbb` or `auto`
 2. `TERM=linux` (the Linux console) — always dark
-3. asks the terminal (OSC 11 query, 150 ms timeout)
+3. asks the terminal (OSC 11 query, 0.5 s timeout)
 4. `$COLORFGBG`
 5. unknown — treated as dark
 

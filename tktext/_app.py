@@ -435,6 +435,8 @@ class Tk(Wm, Frame):
 					ch = -1
 				if ch == -1:
 					break
+				if not seq and ch == ord(']'):
+					return self._readOsc(scr)
 				if not seq and ch not in (ord('['), ord('O')):
 					self._pendingKeys.append(ch)
 					break
@@ -456,6 +458,40 @@ class Tk(Wm, Frame):
 			return 27
 		key = decodeEscape(seq)
 		return -1 if key is None else key
+
+	def _readOsc(self, scr):
+		"""ESC ] was read: swallow an OSC string 'ESC ] <digits> ; ...'
+		ended by BEL or ST (ESC \\), a reply of the terminal arriving after
+		_termbg stopped waiting for it.  Alt-] typed by hand is not
+		followed by '<digits>;' and is returned as ESC, ']'."""
+		def getch():
+			try:
+				return scr.getch()
+			except KeyboardInterrupt:	# fake screen: queue empty
+				return -1
+		prefix = [ord(']')]
+		while True:				# '<digits>;' already buffered
+			ch = getch()
+			if ch == ord(';') and len(prefix) > 1:
+				break
+			if ch == -1 or not ord('0') <= ch <= ord('9'):
+				if ch != -1:
+					prefix.append(ch)
+				self._pendingKeys.extend(prefix)
+				return 27
+			prefix.append(ch)
+		scr.timeout(50)				# the rest of the reply
+		for _ in range(512):
+			ch = getch()
+			if ch in (-1, 7):		# timeout or BEL
+				break
+			if ch == 27:			# ST = ESC \
+				scr.timeout(0)
+				ch = getch()
+				if ch not in (-1, ord('\\')):
+					self._pendingKeys.append(ch)
+				break
+		return -1
 
 	def _suspend(self):
 		"""Ctrl-Z without a binding: stop the process like the shell job
@@ -777,11 +813,13 @@ class Tk(Wm, Frame):
 		press.  Only virtual events somebody bound are generated; then the
 		key is considered handled."""
 		table = self._classBindings.get(widget.winfo_class())
+		top   = widget.winfo_toplevel()
 		for virt, seqs in self._virtualEvents.items():
 			if not any(p in seqs for p in patterns):
 				continue
 			if widget._hasBinding(virt) or self._allBindings._hasBinding(virt) \
-					or (table is not None and table._hasBinding(virt)):
+					or (table is not None and table._hasBinding(virt)) \
+					or (top is not None and top._hasBinding(virt)):
 				widget.event_generate(virt)
 				return 'break'
 		return None

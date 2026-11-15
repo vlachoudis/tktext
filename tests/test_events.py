@@ -463,6 +463,20 @@ class ModifiedKeyTest(unittest.TestCase):
 		self.feed(root, scr, '\x1b[5$x\x1b[b')
 		self.assertEqual(seen, [('Prior', 1), ('x', 0), ('Down', 1)])
 
+	def test_late_osc_reply_is_swallowed(self):
+		# a terminal reply to the OSC 11 query arriving after _termbg
+		# gave up must not be typed; Alt-] still reaches the widget
+		root, scr = makeApp()
+		e = tk.Entry(root)
+		e.pack()
+		attach(root)
+		e.focus_set()
+		self.feed(root, scr, '\x1b]11;rgb:1e1e/1e1e/1e1e\x1b\\a')
+		self.feed(root, scr, '\x1b]11;rgb:ffff/ffff/ffff\x07b')
+		self.assertEqual(e.get(), 'ab')
+		self.feed(root, scr, '\x1b]x')
+		self.assertEqual(e.get(), 'ab]x')
+
 	def test_ctrl_j_is_not_return(self):
 		# nonl(): Enter arrives as CR, LF is Ctrl-J (flair: move card down)
 		from tktext._events import KeyEvent, ModKey, STATE_CONTROL

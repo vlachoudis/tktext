@@ -333,6 +333,18 @@ class EventCompatTest(unittest.TestCase):
 		press(root, 7)				# Ctrl-G
 		self.assertEqual(got, [1])
 
+	def test_event_add_virtual_bound_on_toplevel(self):
+		root, scr = makeApp()
+		e = tk.Entry(root)
+		e.pack()
+		attach(root)
+		e.focus_set()
+		got = []
+		root.event_add('<<Save>>', '<Control-Key-s>')
+		root.bind('<<Save>>', lambda ev: got.append(1))
+		press(root, 19)				# Ctrl-S
+		self.assertEqual(got, [1])
+
 	def test_call_wrapper_is_used(self):
 		root, scr = makeApp()
 		calls = []
