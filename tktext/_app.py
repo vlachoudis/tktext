@@ -32,16 +32,20 @@ from ._layout import doPackLayout, doGridLayout, doPlaceLayout
 from ._events import KEY_TAB, KEY_BTAB, KEY_ENTER, KEY_CTRL_C, KEY_CTRL_Z, \
 	Event, MOTION, B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, B3_ANY, isWheel, \
 	B23_PRESS, B23_RELEASE, \
-	decodeEscape, decodeExtended, isModified, ModKey, STATE_CONTROL
+	decodeEscape, decodeExtended, decodeSgrMouse, isModified, ModKey, \
+	STATE_CONTROL
 
 
 # Written after curses.mousemask(), which enables only the press/release
 # tracking (?1000): ?1002 also reports the motion with a button held
-# (<B1-Motion>), the last ?100x set wins.  xterm XTSHIFTESCAPE (CSI > Ps s):
+# (<B1-Motion>), the last ?100x set wins.  ?1006 SGR encoding, decoded by
+# tktext when ncurses does not (X10 kmous).  xterm XTSHIFTESCAPE (CSI > Ps s):
 # 1 = send Shift-click to the application, 0 = Shift overrides mouse
 # reporting (the default)
-_MOUSE_MODES_ON		= b'\x1b[?1002h\x1b[>1s'
-_MOUSE_MODES_OFF	= b'\x1b[>0s\x1b[?1002l'
+_MOUSE_MODES_ON		= b'\x1b[?1002h\x1b[?1006h\x1b[>1s'
+_MOUSE_MODES_OFF	= b'\x1b[>0s\x1b[?1006l\x1b[?1002l'
+
+_DOUBLE_CLICK_TIME	= 0.4	# s, SGR reports: second press -> double click
 
 
 def _termWrite(data: bytes):
@@ -332,6 +336,9 @@ class Tk(Wm, Frame):
 		self._scr		= scr
 		self._running		= True
 		self._pendingKeys	= []	# read ahead while decoding escapes
+		self._sgrMouse		= []	# SGR mouse reports decoded by tktext
+		self._sgrClick		= None	# (time, x, y) of the last B1 press
+		self._sgrSwallow	= False	# release of a double click
 		self._lfIsCtrlJ		= False	# nonl(): Enter is CR, Ctrl-J is LF
 		# how long a clicked Button stays pressed (no delay on a fake screen)
 		self._pressDelay	= 0.1 if initCurses else 0.0
@@ -428,7 +435,7 @@ class Tk(Wm, Frame):
 		seq = ''
 		scr.timeout(0)
 		try:
-			while len(seq) < 16:
+			while len(seq) < 24:
 				try:
 					ch = scr.getch()
 				except KeyboardInterrupt:	# fake screen: queue empty
@@ -456,8 +463,31 @@ class Tk(Wm, Frame):
 		if len(seq) == 1:			# ESC [ / ESC O typed by hand
 			self._pendingKeys.append(ord(seq))
 			return 27
+		mouse = decodeSgrMouse(seq)
+		if mouse is not None:
+			return self._sgrMouseEvent(*mouse)
 		key = decodeEscape(seq)
 		return -1 if key is None else key
+
+	def _sgrMouseEvent(self, mx, my, bstate):
+		"""Queue an SGR mouse report as KEY_MOUSE.  ncurses synthesizes the
+		double click, here a quick second press at the same cell becomes
+		B1_DCLICK and its release is swallowed (like ncurses)."""
+		if bstate & B1_PRESS:
+			now  = time.monotonic()
+			last = self._sgrClick
+			if last is not None and now - last[0] < _DOUBLE_CLICK_TIME and \
+					last[1:] == (mx, my):
+				bstate = (bstate & ~B1_PRESS) | B1_DCLICK
+				self._sgrClick   = None
+				self._sgrSwallow = True
+			else:
+				self._sgrClick = (now, mx, my)
+		elif bstate & B1_RELEASE and self._sgrSwallow:
+			self._sgrSwallow = False
+			return -1
+		self._sgrMouse.append((mx, my, bstate))
+		return curses.KEY_MOUSE
 
 	def _readOsc(self, scr):
 		"""ESC ] was read: swallow an OSC string 'ESC ] <digits> ; ...'
@@ -544,10 +574,13 @@ class Tk(Wm, Frame):
 			self._raster.invalidate()
 			self._dirty = True
 		elif key == curses.KEY_MOUSE:
-			try:
-				_, mx, my, _, bstate = curses.getmouse()
-			except curses.error:
-				return
+			if self._sgrMouse:
+				mx, my, bstate = self._sgrMouse.pop(0)
+			else:
+				try:
+					_, mx, my, _, bstate = curses.getmouse()
+				except curses.error:
+					return
 			self._onMouse(mx, my, bstate)
 		else:
 			self._onKey(key)

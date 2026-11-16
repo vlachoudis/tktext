@@ -434,6 +434,50 @@ B23_PRESS	= curses.BUTTON2_PRESSED | curses.BUTTON3_PRESSED
 B23_RELEASE	= B2_RELEASE | B3_RELEASE
 
 
+# SGR (?1006) mouse report  ESC [ < b ; x ; y M|m  -> curses bstate.
+# Decoded by tktext when the terminfo kmous is the X10 \E[M (TERM=screen,
+# tmux): ncurses drops the wheel button of a modified X10 wheel event, so
+# Control-wheel arrives as a plain motion with the direction lost
+_SGR_PRESS	= (curses.BUTTON1_PRESSED, curses.BUTTON2_PRESSED,
+		   curses.BUTTON3_PRESSED)
+_SGR_RELEASE	= (curses.BUTTON1_RELEASED, curses.BUTTON2_RELEASED,
+		   curses.BUTTON3_RELEASED)
+_SGR_MODIFIERS	= (
+	(4,	getattr(curses, 'BUTTON_SHIFT', 0)),
+	(8,	getattr(curses, 'BUTTON_ALT', 0)),
+	(16,	getattr(curses, 'BUTTON_CTRL', 0)),
+)
+
+
+def decodeSgrMouse(seq):
+	"""Decode the CSI sequence *seq* (without the ESC) of an SGR mouse
+	report.  Return (x, y, bstate) with 0-based cell coordinates, like
+	curses.getmouse(), or None if *seq* is not a mouse report."""
+	if len(seq) < 7 or not seq.startswith('[<') or seq[-1] not in 'Mm':
+		return None
+	try:
+		b, x, y = (int(v) for v in seq[2:-1].split(';'))
+	except ValueError:
+		return None
+	button = b & 3
+	if b & 64:				# wheel (66/67 horizontal: ignored)
+		if button > 1:
+			return None
+		bstate = WHEEL_UP if button == 0 else WHEEL_DOWN
+	elif b & 32:				# motion
+		bstate = MOTION
+	elif button == 3:
+		return None
+	elif seq[-1] == 'M':
+		bstate = _SGR_PRESS[button]
+	else:
+		bstate = _SGR_RELEASE[button]
+	for bit, mod in _SGR_MODIFIERS:
+		if b & bit:
+			bstate |= mod
+	return x - 1, y - 1, bstate
+
+
 def buttonMask(num) -> int:
 	"""Tk Button<num>Mask state bit of mouse button 1..5 (0 otherwise)."""
 	return STATE_BUTTON1 << (num - 1) if 1 <= num <= 5 else 0
