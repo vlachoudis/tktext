@@ -42,6 +42,8 @@ def _addStr(scr, y, x, s, attr=0):
 		sh, sw = 9999, 9999
 	if y < 0 or y >= sh or x >= sw:
 		return
+	if not s.isascii():
+		s = _visible(s)
 	if x < 0:
 		s = _skipCells(s, -x)
 		x = 0
@@ -109,6 +111,18 @@ def _charWidth(c):
 	if unicodedata.category(c) in ('Mn', 'Me', 'Cf'):
 		return 0
 	return 1
+
+
+@functools.lru_cache(maxsize=4096)
+def _isFormat(c):
+	return c >= '̀' and unicodedata.category(c) == 'Cf'
+
+
+def _visible(s):
+	"""Drop the invisible format characters (U+FEFF, U+200B, ...).
+	Terminals disagree on their width: ncurses gives them none, GNU screen
+	one cell, shifting the rest of the line and leaving stale cells."""
+	return ''.join(c for c in s if not _isFormat(c))
 
 
 def _strWidth(s):

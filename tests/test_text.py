@@ -133,6 +133,20 @@ class TextRenderTest(unittest.TestCase):
 		self.assertEqual(scr.row(y)[x:x + 20].rstrip(), 'aaaa bbbb cccc dddd')
 		self.assertEqual(scr.row(y + 1)[x:x + 20].rstrip(), 'eeee ffff')
 
+	def test_formatCharsNotSent(self):
+		# U+FEFF (a BOM in a file) has no width for ncurses but one cell
+		# in GNU screen: sending it shifts the line and leaves stale cells
+		root, scr, t = makeText('﻿ab​c')
+		sent = []
+		orig = scr.addstr
+		def addstr(y, x, s, attr=0):
+			sent.append(s)
+			orig(y, x, s, attr)
+		scr.addstr = addstr
+		root._update(force=True)
+		self.assertTrue(any('abc' in s for s in sent))
+		self.assertFalse(any('﻿' in s or '​' in s for s in sent))
+
 	def test_down_moves_by_display_line(self):
 		root, scr, t = makeText('x' * 30, wrap='char')
 		t.mark_set('insert', '1.2')

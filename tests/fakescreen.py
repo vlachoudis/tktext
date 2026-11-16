@@ -83,13 +83,19 @@ class FakeScreen:
 		pass
 
 	def timeout(self, ms):
-		pass
+		self.delay = ms
 
 	def getch(self):
 		# An exhausted key queue behaves like Ctrl-C so that a modal loop
 		# under test can never hang.
 		if not self.keys:
 			raise KeyboardInterrupt
+		# None in the queue: input arriving later, seen only when waiting
+		if self.keys[0] is None:
+			if getattr(self, 'delay', -1) == 0:
+				return -1
+			self.keys.pop(0)
+			return self.getch()
 		return self.keys.pop(0)
 
 	def resize(self, width, height):

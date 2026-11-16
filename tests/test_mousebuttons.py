@@ -87,6 +87,20 @@ class MotionCompressionTest(unittest.TestCase):
 			['<Button-1>', '<B1-Motion>', '<ButtonRelease-1>'])
 		self.assertEqual(self.events[1][1:], (7, 1))
 
+	def test_splitReportIsNotTyped(self):
+		keys = []
+		self.root.bind_all('<Key>', lambda e: keys.append(e.keysym))
+		self.sgr(0, 1, 1)
+		for split in (1, 2, 3, 6):		# report arriving in two parts
+			self.sgr(32, 2+split, 1)
+			self.scr.keys.insert(len(self.scr.keys) - 9 + split, None)
+		self.sgr(0, 8, 1, 'm')
+		self.dispatch()
+		self.assertEqual(keys, [])
+		self.assertEqual([e[0] for e in self.events],
+			['<Button-1>', '<B1-Motion>', '<ButtonRelease-1>'])
+		self.assertEqual(self.events[1][1:], (8, 1))
+
 	def test_keyStopsCompression(self):
 		self.sgr(0, 1, 1)
 		self.sgr(32, 2, 1)

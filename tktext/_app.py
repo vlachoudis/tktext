@@ -46,6 +46,8 @@ _MOUSE_MODES_ON		= b'\x1b[?1002h\x1b[?1006h\x1b[>1s'
 _MOUSE_MODES_OFF	= b'\x1b[>0s\x1b[?1006l\x1b[?1002l'
 
 _DOUBLE_CLICK_TIME	= 0.4	# s, SGR reports: second press -> double click
+_ESC_WAIT		= 25	# ms, wait for the rest of an escape sequence
+_MOUSE_WAIT		= 200	# ms, wait for the rest of an SGR mouse report
 
 
 def _termWrite(data: bytes):
@@ -436,12 +438,15 @@ class Tk(Wm, Frame):
 
 	def _readEscape(self, scr):
 		"""ESC was read: collect a following CSI/SS3 sequence that is
-		already buffered.  Returns the decoded key, -1 for an unknown
-		sequence (swallowed instead of typed) or 27 for a lone Escape."""
+		buffered or arrives within _ESC_WAIT.  Returns the decoded key, -1
+		for an unknown sequence (swallowed instead of typed) or 27 for a
+		lone Escape."""
 		seq = ''
-		scr.timeout(0)
 		try:
 			while len(seq) < 24:
+				# a report may arrive split (busy redraw, tmux, ssh): wait
+				# for its rest, else the tail would be typed as keys
+				scr.timeout(_MOUSE_WAIT if seq.startswith('[<') else _ESC_WAIT)
 				try:
 					ch = scr.getch()
 				except KeyboardInterrupt:	# fake screen: queue empty
