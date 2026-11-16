@@ -71,13 +71,14 @@ _BORDER_CHARS = {
 	'single':	('┌', '┐', '└', '┘', '─', '│'),
 	'double':	('╔', '╗', '╚', '╝', '═', '║'),
 }
+_BORDER_CHARS['solid'] = _BORDER_CHARS['single']	# Tk solid: a plain line
 _BORDER_ASCII	= ('+', '+', '+', '+', '-', '|')
 
 
 def _drawBorder(scr, y, x, h, w, relief='solid', attr=0):
 	"""Draw a border inside the given rectangle.
 
-	relief values that select Unicode line art: 'single', 'double'.
+	relief values that select Unicode line art: 'single', 'double', 'solid'.
 	All other non-flat values use ASCII +/-/|.
 	"""
 	if h < 1 or w < 1:
@@ -1923,11 +1924,11 @@ class Widget:
 	def _cfgBorder(self) -> int:
 		"""Configured border width (used for size requests).  In pixel
 		mode a Tk border (a few pixels of 3D relief) is not worth a whole
-		cell: only the line-art reliefs and widgets that need their frame
-		(LabelFrame caption) keep it."""
+		cell: only the line reliefs (solid and the line-art ones) and widgets
+		that need their frame (LabelFrame caption) keep it."""
 		bd = max(0, _int(self._opts.get('borderwidth')))
 		if bd and (PX != 1 or PY != 1) and not self._keepBorder and \
-				self._opts.get('relief') not in ('single', 'double'):
+				self._opts.get('relief') not in ('solid', 'single', 'double'):
 			return 0
 		return min(bd, 1) if PX != 1 else bd
 

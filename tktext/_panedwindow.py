@@ -78,9 +78,17 @@ class PanedWindow(Frame):
 		child._setManager(self._GEO, info)
 		self._markDirty()
 
-	def forget(self, child):
+	def _pane(self, child):
+		"""Pane widget from a widget, its path name or its index"""
 		if isinstance(child, int):
-			child = self._panes[child]
+			return self._panes[child]
+		if isinstance(child, str):
+			for p in self._panes:
+				if str(p) == child: return p
+		return child
+
+	def forget(self, child):
+		child = self._pane(child)
 		if child in self._panes:
 			self._panes.remove(child)
 			child._forget()
@@ -100,6 +108,7 @@ class PanedWindow(Frame):
 	def paneconfigure(self, child, cnf=None, **kw):
 		if cnf:
 			kw.update(cnf)
+		child = self._pane(child)
 		if child not in self._panes:
 			raise TclError(f'{child} not managed by {self}')
 		if not kw:
@@ -110,12 +119,11 @@ class PanedWindow(Frame):
 	paneconfig = paneconfigure
 
 	def panecget(self, child, option):
-		return child._geoInfo.get(option, '')
+		return self._pane(child)._geoInfo.get(option, '')
 
 	def pane(self, pane, option=None, **kw):
 		"""ttk: query or modify the options of *pane*."""
-		if isinstance(pane, int):
-			pane = self._panes[pane]
+		pane = self._pane(pane)
 		if option is not None:
 			return pane._geoInfo.get(option, '')
 		if kw:
