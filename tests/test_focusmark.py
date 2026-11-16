@@ -43,6 +43,15 @@ class FocusMarkTest(unittest.TestCase):
 		self.redraw()
 		self.assertTrue(self.reversed(self.canvas))
 
+	def test_focusedTextNoHighlightNotMarked(self):
+		# highlightthickness=0 asks for no focus ring, as in Tk
+		text = tk.Text(self.frame, width=10, height=2, highlightthickness=0,
+				state="disabled", takefocus=1)
+		text.pack()
+		text.focus_set()
+		self.redraw()
+		self.assertFalse(self.reversed(text))
+
 	def test_explicitMarkOnFrame(self):
 		tk.focusMark(self.root, self.frame)
 		self.redraw()

@@ -2048,7 +2048,11 @@ class Text(_ScrollMixin, Widget):
 			_addStr(scr, y, x + j, text[j:k], cellAttr(cells[j]))
 			j = k
 
-	def _showsFocus(self) -> bool: return self._cursorPos() is not None
+	def _showsFocus(self) -> bool:
+		# highlightthickness=0 asks for no focus ring, as in Tk
+		hl = self._opts.get('highlightthickness')
+		if hl is not None and _int(hl) == 0: return True
+		return self._cursorPos() is not None
 
 	def _cursorPos(self):
 		"""Return screen (y, x) of cursor for Tk to position the cursor block."""
