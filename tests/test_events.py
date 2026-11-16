@@ -553,3 +553,53 @@ class ModifiedKeyTest(unittest.TestCase):
 		self.feed(root, scr, '\x1bx\x1b[')
 		self.assertEqual(seen, [1, 1])
 		self.assertEqual(e.get(), 'x[')
+
+
+class NestedLoopDragTest(unittest.TestCase):
+
+	def test_wait_window_from_release_binding_gets_the_clicks(self):
+		# an in-place editor opened on <ButtonRelease-1> runs wait_window()
+		# before the release ended the drag: its clicks must reach it
+		import curses
+		root, scr = makeApp(40, 12)
+		lb = tk.Listbox(root, height=8)
+		lb.pack(fill='both', expand=True)
+		for s in ('a', 'b', 'c'):
+			lb.insert('end', s)
+		attach(root)
+		outer = []
+		inner = []
+
+		def edit(event):
+			outer.append(lb.nearest(event.y))
+			frame = tk.Frame(lb)
+			popup = tk.Listbox(frame, height=3)
+			popup.pack(fill='both', expand=True)
+			for s in ('x', 'y', 'z'):
+				popup.insert('end', s)
+
+			def ok(ev):
+				inner.append(popup.get(popup.nearest(ev.y)))
+				frame.destroy()
+			popup.bind('<ButtonRelease-1>', ok)
+			frame.place(in_=lb, x=0, y=0, relwidth=1, height=3)
+			frame.wait_window()
+
+		lb.bind('<ButtonRelease-1>', edit)
+		root._update(force=True)
+		y = lb._y + 1
+		x = lb._x + 2
+		scr.keys = [lambda: root._onMouse(x, y, curses.BUTTON1_PRESSED),
+			lambda: root._onMouse(x, y, curses.BUTTON1_RELEASED)]
+
+		def getch(orig=scr.getch):
+			if scr.keys and callable(scr.keys[0]):
+				scr.keys.pop(0)()
+				return -1
+			return orig()
+		scr.getch = getch
+		root._onMouse(x, y, curses.BUTTON1_PRESSED)
+		root._onMouse(x, y, curses.BUTTON1_RELEASED)
+		self.assertEqual(len(outer), 1)		# no second editor
+		self.assertEqual(len(inner), 1)		# the popup got the click
+		self.assertIsNone(root._dragWidget)

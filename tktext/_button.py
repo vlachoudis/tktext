@@ -96,11 +96,19 @@ class Button(Widget):
 
 	def _bracketed(self) -> bool:
 		"""In pixel mode a raised push button has no 3D border: it is
-		drawn as [text] instead."""
+		drawn as [text] instead.  A single glyph placed over another
+		widget is an overlay with no room for the brackets."""
 		from . import _core
-		return _core.PX != 1 and self.winfo_class() == 'Button' and \
-			self._opts.get('relief', 'raised') not in ('flat', 'groove') and \
-			not self._cfgBorder()
+		if _core.PX == 1 or self.winfo_class() != 'Button' or \
+				self._opts.get('relief', 'raised') in ('flat', 'groove') or \
+				self._cfgBorder():
+			return False
+		if self._geoManager != 'place':
+			return True
+		text = self._plainText()
+		if self._opts.get('image'):
+			return bool(text) or not self._imageGlyph()
+		return len(text) > 1
 
 	def _iconFramed(self) -> bool:
 		return self._bracketed() or super()._iconFramed()

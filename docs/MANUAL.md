@@ -84,7 +84,7 @@ to the default root.
 | `Tk`, `Toplevel` | Root and extra windows (see §4) |
 | `Frame`, `LabelFrame` | Containers |
 | `Label`, `Message` | |
-| `Button` | Raised buttons draw as `[text]` in drop-in mode |
+| `Button` | Raised buttons draw as `[text]` in drop-in mode (a one-glyph button placed with `place()` stays bare) |
 | `Menubutton` | Button posting its `menu=` (`direction=below/above/left/right/flush`); also `ttk.Menubutton`; shows `▼` unless `indicatoron=0` |
 | `Entry` | Single-line editor; default field colour from the `entry` theme role; `validate`/`validatecommand`/`invalidcommand` like Tk |
 | `Spinbox`, `Combobox` | Entry subclasses (▲▼ arrows / drop-down list) |

@@ -247,6 +247,23 @@ class PixelModeTest(unittest.TestCase):
 		self.assertIsNotNone(scr.find('[▪]'))
 		self.assertIsNotNone(scr.find('· Tab'))
 
+	def test_placed_glyph_button_unbracketed(self):
+		# flair InputPage: one-glyph buttons overlaid on a Text
+		root, scr = makeApp(40, 12)
+		img = tk.PhotoImage(width=16, height=16)
+		img.glyph = '✎'
+		t = tk.Text(root, height=5)
+		t.pack(fill='both', expand=True)
+		tk.Button(t, text='▼', border=0, width=2).place(relx=0.5, rely=0.0, anchor='n')
+		tk.Button(t, image=img, command=lambda: None).place(relx=1.0, x=-20)
+		tk.Button(t, text='Go').place(x=0, y=24)
+		attach(root)
+		self.assertIsNotNone(scr.find('▼'))
+		self.assertIsNotNone(scr.find('✎'))
+		self.assertIsNone(scr.find('[▼'))
+		self.assertIsNone(scr.find('[✎'))
+		self.assertIsNotNone(scr.find('[Go]'))
+
 	def test_compound_placeholder_glyph_aligns(self):
 		root, scr = makeApp(40, 12)
 		plain = tk.PhotoImage(width=16, height=16)

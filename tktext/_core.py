@@ -1410,9 +1410,19 @@ class Widget:
 			return
 		if not app._ensureScreen():
 			return
-		app._update(force=True)
-		while not done() and not app._quit and app._scr is not None:
-			app._processOneEvent()
+		# a wait started from a <ButtonRelease> binding (e.g. an in-place
+		# editor) runs before the release cleared the drag: the drag owner
+		# would otherwise steal every press of the nested loop
+		savedDrag	= app._dragWidget
+		app._dragWidget	= None
+		try:
+			app._update(force=True)
+			while not done() and not app._quit and app._scr is not None:
+				app._processOneEvent()
+		finally:
+			if app._dragWidget is None and savedDrag is not None \
+					and not savedDrag._destroyed:
+				app._dragWidget = savedDrag
 
 	def wait_window(self, window=None):
 		window = self if window is None else window
