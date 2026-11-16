@@ -21,7 +21,7 @@ import traceback
 import weakref
 
 from ._colors import ColorManager
-from ._raster import RasterRenderer
+from ._raster import RasterRenderer, MARKER_PAIR
 from . import _colors, _termbg
 from ._core import Widget, _fillRect, _addStr, _pad, _mouseEventNames, \
 	_newMouseEvent, _newKeyEvent
@@ -73,6 +73,7 @@ class Tk(Wm, Frame):
 		self._rasterWidgets	= weakref.WeakSet()	# widgets with a rasterImage
 		self._scr		= None
 		self._focusWidget	= None
+		self._focusMark		= None	# virtual focus shown instead (see focusMark)
 		self._dragWidget	= None	# widget that owns the current mouse drag
 		self._btnDrag		= None	# (widget, 2|3) of a middle/right button drag
 		self._menuGrab		= False	# a mouse press started inside a menu
@@ -1329,6 +1330,8 @@ class Tk(Wm, Frame):
 			if top._isMapped():
 				top.render(scr)
 
+		self._drawFocusMark(scr)
+
 		# Render posted menus on top of everything
 		for menu in list(self._postedMenus):
 			menu.render(scr)
@@ -1360,6 +1363,53 @@ class Tk(Wm, Frame):
 
 		scr.refresh()
 		self._raster.flush(scr)
+
+	def _markedWidget(self):
+		"""Widget to mark: the virtual focus, else the focus widget when
+		it does not show the focus itself.  A container that got the focus
+		with focus_set() (takefocus=0, e.g. a Frame) shows no ring, like Tk"""
+		w = self._focusMark
+		if w is None or w._destroyed:
+			w = self._focusWidget
+			if w is None or w._destroyed or w._showsFocus() or \
+			   (isinstance(w, Frame) and not w._isFocusable()):
+				return None
+		if not w.winfoViewable():
+			return None
+		return w
+
+	def _drawFocusMark(self, scr):
+		"""Reverse the cells of the outline of the marked widget, keeping
+		their characters: a focus ring that covers nothing.  Small widgets
+		(a label, a button made of a label) are reversed completely."""
+		w = self._markedWidget()
+		if w is None:
+			return
+		y0 = max(w._y, 0)
+		x0 = max(w._x, 0)
+		y1 = min(w._y + w._height, self._height)
+		x1 = min(w._x + w._width,  self._width)
+		if y1 <= y0 or x1 <= x0:
+			return
+		if y1 - y0 <= 2 or x1 - x0 <= 2:
+			cells = [(y, x) for y in range(y0, y1) for x in range(x0, x1)]
+		else:
+			cells  = [(y, x) for y in (y0, y1-1) for x in range(x0, x1)]
+			cells += [(y, x) for y in range(y0+1, y1-1) for x in (x0, x1-1)]
+		# truecolor image cells (raster markers) are painted after the
+		# refresh: reversed they would show only the blank marker pair,
+		# give them the focus colours instead (the image is not drawn)
+		marker = self._raster._pairAttr(MARKER_PAIR) if self._raster.active else None
+		focus  = w._focusAttr()
+		for y, x in cells:
+			try:
+				attr = scr.inch(y, x) & curses.A_ATTRIBUTES
+				if attr == marker:
+					scr.chgat(y, x, 1, focus)
+				else:
+					scr.chgat(y, x, 1, attr ^ curses.A_REVERSE)
+			except curses.error:
+				pass
 
 	def _drawTitleBar(self, scr, owner=None):
 		"""Draw the title (and menubar) of the maximised window *owner*
@@ -1495,3 +1545,14 @@ class _FocusEvent(Event):
 		super().__init__()
 		self.widget = widget
 		self.type   = kind
+
+
+def focusMark(master, widget=None) -> None:
+	"""tktext extension: mark *widget* as the focus without giving it the
+	keyboard (e.g. the target of a keyboard navigation mode), or remove
+	the mark with None.  *master* is any widget of the application."""
+	app = master._getApp()
+	if app is None:
+		return
+	app._focusMark = widget
+	app._dirty     = True

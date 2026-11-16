@@ -118,6 +118,8 @@ class _ScrollMixin:
 class Listbox(_ScrollMixin, Widget):
 	"""Scrollable list widget.  Mirrors tkinter.Listbox."""
 
+	def _showsFocus(self) -> bool: return True
+
 	def __init__(self, parent=None, cnf=None, **kwargs):
 		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)

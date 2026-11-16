@@ -57,6 +57,19 @@ class FakeScreen:
 	def addch(self, y, x, ch, attr=0):
 		self.addstr(y, x, ch if isinstance(ch, str) else chr(ch), attr)
 
+	def inch(self, y, x):
+		if not (0 <= y < self.height and 0 <= x < self.width):
+			raise curses.error('winch() returned ERR')
+		ch = self.chars[y][x]
+		return self.attrs[y][x] | (ord(ch) & curses.A_CHARTEXT if ch else 0)
+
+	def chgat(self, y, x, n, attr):
+		if not (0 <= y < self.height and 0 <= x < self.width):
+			raise curses.error('wchgat() returned ERR')
+		end = self.width if n < 0 else min(self.width, x + n)
+		for i in range(x, end):
+			self.attrs[y][i] = attr
+
 	def move(self, y, x):
 		self.cursor = (y, x)
 

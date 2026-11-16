@@ -343,6 +343,8 @@ class Entry(Widget):
 	def _visW(self) -> int:
 		return max(1, self._width - 2*self._border())
 
+	def _showsFocus(self) -> bool: return self._cursorPos() is not None
+
 	def _cursorPos(self):
 		"""Return screen (y, x) for the cursor block."""
 		if self._opts.get('state') != 'normal':

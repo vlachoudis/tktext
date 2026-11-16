@@ -26,6 +26,8 @@ def _float(v, default):
 class Scale(Widget):
 	"""Horizontal or vertical slider widget.  Mirrors tkinter.Scale."""
 
+	def _showsFocus(self) -> bool: return True
+
 	def __init__(self, parent=None, cnf=None, **kwargs):
 		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)

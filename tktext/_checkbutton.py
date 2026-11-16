@@ -30,6 +30,8 @@ class Checkbutton(Widget):
 
 	_clickFocus = False	# tkinter: clicking does not take the focus
 
+	def _showsFocus(self) -> bool: return True
+
 	def __init__(self, parent=None, cnf=None, **kwargs):
 		parent, kwargs = _initArgs(parent, cnf, kwargs)
 		super().__init__(parent)

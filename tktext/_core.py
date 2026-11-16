@@ -2094,6 +2094,11 @@ class Widget:
 		"""Active/focused element: active{fore,back}ground or the 'focus' role."""
 		return self._pairAttr('activeforeground', 'activebackground', 'focus', **kw)
 
+	def _showsFocus(self) -> bool:
+		"""True if the widget draws its own focus (reversed button, active
+		row, cursor …); the others get the focus mark of the App"""
+		return False
+
 	def _isFocusable(self):
 		tf = self._opts.get('takefocus', True)
 		return (tf not in (False, 0, '0', '') and

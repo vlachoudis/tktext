@@ -30,7 +30,7 @@ Usage example::
 """
 
 from ._core        import TclError, Widget
-from ._app         import Tk
+from ._app         import Tk, focusMark
 from ._toplevel    import Toplevel, Wm
 from ._frame       import Frame, LabelFrame
 from ._label       import Label, Message

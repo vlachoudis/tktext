@@ -1,5 +1,5 @@
 """Keyboard resizing: Treeview column widths in pixel mode and flair's
-tkResize (F8 resize mode) running on tktext."""
+tkResize (F9 resize mode) running on tktext."""
 import os
 import subprocess
 import sys
@@ -46,12 +46,15 @@ from tkinter import ttk
 from fakescreen import makeApp, attach, press
 import tkExtra, tkResize
 
-F8 = curses.KEY_F8
+F9 = curses.KEY_F9
+_ev   = tktext._events
+CS    = _ev.STATE_CONTROL | _ev.STATE_SHIFT
+RIGHT, LEFT = _ev.KEY_SHIFT_RIGHT, _ev.KEY_SHIFT_LEFT
 root, scr = makeApp(100, 30)
 root.geometry('800x480')
 tkResize.bindResize(root)
 
-# --- tk.PanedWindow: F8, Right x2, Escape restores, focus comes back
+# --- tk.PanedWindow: F9, Shift+Right x2, Escape restores, focus comes back
 pw = tk.PanedWindow(root, orient=tk.HORIZONTAL)
 pw.pack(fill=tk.BOTH, expand=True)
 left  = tk.Frame(pw); pw.add(left, width=200)
@@ -60,7 +63,7 @@ ent   = tk.Entry(left); ent.pack()
 attach(root)
 ent.focus_set(); root.update()
 x0 = pw.sash_coord(0)[0]
-press(root, F8, curses.KEY_RIGHT, curses.KEY_RIGHT)
+press(root, F9, RIGHT, RIGHT)
 assert tkResize.ResizeMode.active is not None
 assert pw.sash_coord(0)[0] == x0 + 16, (x0, pw.sash_coord(0))
 press(root, 27)
@@ -68,16 +71,16 @@ assert pw.sash_coord(0)[0] == x0
 assert tkResize.ResizeMode.active is None
 assert root.focus_get() is ent, root.focus_get()
 
-# Return keeps the new position; Shift+Right is a big step
-press(root, F8, tktext._events.KEY_SHIFT_RIGHT, 10)
+# Return keeps the new position; Ctrl+Shift+Right is a big step
+press(root, F9, _ev.ModKey(curses.KEY_RIGHT, CS), 10)
 assert pw.sash_coord(0)[0] == x0 + 8*tkResize.BIGSTEP, pw.sash_coord(0)
 assert root.focus_get() is ent
 
-# vim keys: h/l move like Left/Right, L is a big step, Escape restores
+# vim keys: H/L move like Left/Right, Ctrl+L is a big step, Escape restores
 x1 = pw.sash_coord(0)[0]
-press(root, F8, ord('l'), ord('l'), ord('h'))
+press(root, F9, ord('L'), ord('L'), ord('H'))
 assert pw.sash_coord(0)[0] == x1 + 8, (x1, pw.sash_coord(0))
-press(root, ord('L'))
+press(root, _ev.ModKey(ord('L'), CS))
 assert pw.sash_coord(0)[0] == x1 + 8 + 8*tkResize.BIGSTEP, pw.sash_coord(0)
 press(root, 27)
 assert pw.sash_coord(0)[0] == x1 and root.focus_get() is ent
@@ -90,7 +93,7 @@ mlb._lists[1].focus_set(); root.update()
 before = [mlb.paneframe.sash_coord(i)[0] for i in range(2)]
 dividers = tkResize.resizeTargets(mlb._lists[1])
 assert dividers[0].name == "column B", dividers
-press(root, F8, curses.KEY_RIGHT, 10)
+press(root, F9, RIGHT, 10)
 after = [mlb.paneframe.sash_coord(i)[0] for i in range(2)]
 assert after == [before[0], before[1] + 8], (before, after)
 # the outer PanedWindow comes after the columns; the inner pane is skipped
@@ -98,7 +101,7 @@ assert isinstance(dividers[-1], tkResize.PanedDivider) and dividers[-1].widget i
 assert all(d.widget is not mlb.paneframe for d in dividers)
 
 # --- Tab cycles to the next divider (column C has no right border: A)
-press(root, F8, 9, curses.KEY_LEFT, 10)
+press(root, F9, 9, LEFT, 10)
 assert mlb.paneframe.sash_coord(0)[0] == before[0] - 8
 
 # --- Treeview: column widths, Tab walks the columns
@@ -111,11 +114,11 @@ tv.pack(fill=tk.BOTH, expand=True)
 root.update()
 tv.focus_set(); root.update()
 # Right on #0 (size gives the width), Tab to size, Left x2 (date takes it)
-press(root, F8, curses.KEY_RIGHT, 9, curses.KEY_LEFT, curses.KEY_LEFT, 10)
+press(root, F9, RIGHT, 9, LEFT, LEFT, 10)
 widths = [tv.column(c, "width") for c in ("#0", "size", "date")]
 assert widths == [168, 56, 96], widths
 # Escape restores both columns
-press(root, F8, curses.KEY_RIGHT, 27)
+press(root, F9, RIGHT, 27)
 assert [tv.column(c, "width") for c in ("#0", "size", "date")] == widths
 top.destroy(); root.update()
 
@@ -131,7 +134,7 @@ tv2.pack(fill=tk.BOTH, expand=True)
 pw2.add(tk.Frame(pw2))
 root.update(); tv2.focus_set(); root.update()
 x2 = pw2.sash_coord(0)[0]
-press(root, F8, curses.KEY_RIGHT, curses.KEY_RIGHT, 10)
+press(root, F9, RIGHT, RIGHT, 10)
 assert pw2.sash_coord(0)[0] == x2 + 16, (x2, pw2.sash_coord(0))
 
 # --- nested tkExtra.PanedWindows: Up/Down move the vertical, Left/Right
@@ -182,11 +185,48 @@ assert ed._tabs == [98, 256, 414, 572], ed._tabs
 allTabs.move(-200)		# would hide columns: refused
 assert ed._tabs == [98, 256, 414, 572], ed._tabs
 
-# --- no divider: F8 does nothing and the focus stays
+# --- no divider: Shift+arrows do nothing, Escape returns the focus
 for w in root.winfo_children(): w.destroy()
 e3 = tk.Entry(root); e3.pack(); root.update(); e3.focus_set(); root.update()
-press(root, F8)
+press(root, F9, RIGHT)
+assert tkResize.ResizeMode.active is not None
+press(root, 27)
 assert tkResize.ResizeMode.active is None and root.focus_get() is e3
+
+# --- arrows/hjkl move the focus to the nearest widget of the direction
+for w in root.winfo_children(): w.destroy()
+grid = [[tk.Entry(root, width=8) for c in range(3)] for r in range(3)]
+for r, row in enumerate(grid):
+	for c, e in enumerate(row): e.grid(row=r, column=c)
+root.update(); grid[1][1].focus_set(); root.update()
+for key, (r, c) in ((curses.KEY_RIGHT, (1, 2)), (curses.KEY_LEFT, (1, 0)),
+		    (curses.KEY_UP, (0, 1)), (curses.KEY_DOWN, (2, 1))):
+	assert tkResize.focusNeighbor(grid[1][1], *tkResize._ARROWS[
+		{curses.KEY_RIGHT: "Right", curses.KEY_LEFT: "Left",
+		 curses.KEY_UP: "Up", curses.KEY_DOWN: "Down"}[key]]) is grid[r][c], key
+assert tkResize.focusNeighbor(grid[1][2], 1, 0) is None
+press(root, F9, ord('l'), ord('j'))
+assert tkResize.ResizeMode.active.focus is grid[2][2]
+press(root, 10)
+assert root.focus_get() is grid[2][2], root.focus_get()
+press(root, F9, ord('k'), ord('h'), 27)
+assert root.focus_get() is grid[2][2], root.focus_get()
+
+# --- focus mark: the F9 target is shown with reversed cells, keeping its text
+def reversed_(w):
+	return [bool(scr.attrs[w._y][x] & curses.A_REVERSE) for x in range(w._x, w._x + w._width)]
+grid[0][0].insert(0, "abc")
+press(root, F9, ord('k'), ord('k'), ord('h'), ord('h'))
+assert tkResize.ResizeMode.active.focus is grid[0][0]
+assert all(reversed_(grid[0][0])) and not any(reversed_(grid[1][1]))
+assert scr.row(grid[0][0]._y)[grid[0][0]._x:].startswith("abc")
+press(root, 27)
+assert not any(reversed_(grid[0][0])), "mark removed on Escape"
+
+# a focused Label has no focus look of its own: tktext marks it
+lab = tk.Label(root, text="Save", takefocus=1); lab.grid(row=3, column=0)
+root.update(); lab.focus_set(); root.update()
+assert all(reversed_(lab)) and scr.row(lab._y)[lab._x:].startswith("Save")
 print("RESIZE-OK")
 '''
 
