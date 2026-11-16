@@ -198,6 +198,10 @@ class TestTruecolor(unittest.TestCase):
 		self.out.clear()
 		self.assertEqual(self.frame(), '')		# nothing changed
 
+	def test_colourSetOnce(self):
+		# a solid raster sets its colours once: SGR persists between cells
+		self.assertEqual(self.frame().count('38;2;'), 1)
+
 	def test_overlayClipped(self):
 		self.frame()
 		self.out.clear()

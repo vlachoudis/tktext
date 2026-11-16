@@ -406,15 +406,20 @@ class Tk(Wm, Frame):
 		if self._dirty:
 			self._update()
 
-	def _readKey(self, scr):
+	def _readKey(self, scr, wait=True):
 		"""Return the next key, decoding the modified special keys the
 		terminfo entry does not know (e.g. Super-Right = ESC [1;9C under
-		TERM=screen arrives as six separate characters)."""
+		TERM=screen arrives as six separate characters).  With wait=False
+		return -1 when no input is buffered."""
 		pending = getattr(self, '_pendingKeys', None)
 		if pending:
 			return pending.pop(0)
-		scr.timeout(self._nextTimeout())
-		key = scr.getch()
+		scr.timeout(self._nextTimeout() if wait else 0)
+		try:
+			key = scr.getch()
+		except KeyboardInterrupt:
+			if wait: raise
+			return -1			# fake screen: queue empty
 		if key == 27:
 			return self._readEscape(scr)
 		if key == 10 and self._lfIsCtrlJ:
@@ -575,16 +580,47 @@ class Tk(Wm, Frame):
 			self._raster.invalidate()
 			self._dirty = True
 		elif key == curses.KEY_MOUSE:
-			if self._sgrMouse:
-				mx, my, bstate = self._sgrMouse.pop(0)
-			else:
-				try:
-					_, mx, my, _, bstate = curses.getmouse()
-				except curses.error:
-					return
-			self._onMouse(mx, my, bstate)
+			report = self._mouseReport()
+			if report is None:
+				return
+			if report[2] & MOTION:
+				report = self._lastMotion(report)
+			self._onMouse(*report)
 		else:
 			self._onKey(key)
+
+	def _mouseReport(self):
+		"""@return the (x, y, bstate) of a KEY_MOUSE just read, or None"""
+		if self._sgrMouse:
+			return self._sgrMouse.pop(0)
+		try:
+			_, mx, my, _, bstate = curses.getmouse()
+		except curses.error:
+			return None
+		return mx, my, bstate
+
+	def _lastMotion(self, report):
+		"""Motion compression like Tk: of the motion reports already
+		buffered with the same state only the last one is delivered, so a
+		drag slower to handle than the terminal reports does not lag
+		behind the mouse.  The first other input is put back."""
+		scr = self._scr
+		while scr is not None:
+			key = self._readKey(scr, False)
+			if key == -1:
+				break
+			if key != curses.KEY_MOUSE:
+				self._pendingKeys.insert(0, key)
+				break
+			nxt = self._mouseReport()
+			if nxt is None:
+				continue
+			if nxt[2] != report[2]:
+				self._sgrMouse.insert(0, nxt)
+				self._pendingKeys.insert(0, curses.KEY_MOUSE)
+				break
+			report = nxt
+		return report
 
 	# ------------------------------------------------------------------
 	# Errors in callbacks

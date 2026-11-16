@@ -169,6 +169,17 @@ class RasterRenderer:
 		"""@return rows of (topRGB, bottomRGB) for a cols x rows area,
 		sampling the width x height RGB *data* (nearest pixel, so a raster
 		of a stale size still fills the widget)."""
+		if width == cols and height == 2*rows:
+			# exact size: pair the RGB triplets of two rows with zip
+			line = 3 * width
+			mv   = memoryview(data)
+			result = []
+			for cy in range(rows):
+				o   = 2 * cy * line
+				top = bytes(mv[o:o+line])
+				bot = bytes(mv[o+line:o+2*line])
+				result.append(list(zip(zip(*[iter(top)]*3), zip(*[iter(bot)]*3))))
+			return result
 		result = []
 		ph = 2 * rows
 		for cy in range(rows):
@@ -215,8 +226,9 @@ class RasterRenderer:
 		budget = min(self._budget, RASTER_LAST + 1 - self._nextPair)
 		qkey   = (budget, self._colors._nColors)
 		if cache[2] is None or cache[2][0] != qkey:
-			flat  = [(self._colorIndex(t), self._colorIndex(b))
-					for row in rgbRows for t, b in row]
+			index = {rgb: self._colorIndex(rgb)
+					for row in rgbRows for cell in set(row) for rgb in cell}
+			flat  = [(index[t], index[b]) for row in rgbRows for t, b in row]
 			cells, combos = quantize(flat, budget)
 			cache = (key, rgbRows, (qkey, cells, combos))
 			widget._rasterCache = cache
@@ -252,6 +264,7 @@ class RasterRenderer:
 		marker = self._pairAttr(MARKER_PAIR)
 		shadow = {}
 		out    = []
+		fg = bg = None		# colours set on the terminal, SGR persists
 		for y0, x0, rows in self._drawn:
 			for cy, row in enumerate(rows):
 				y   = y0 + cy
@@ -268,8 +281,15 @@ class RasterRenderer:
 					if run is None or run != x:
 						out.append(f'\033[{y+1};{x+1}H')
 					t, b = cell
-					out.append(f'\033[38;2;{t[0]};{t[1]};{t[2]};'
-						f'48;2;{b[0]};{b[1]};{b[2]}m{HALF}')
+					if t != fg and b != bg:
+						out.append(f'\033[38;2;{t[0]};{t[1]};{t[2]};'
+							f'48;2;{b[0]};{b[1]};{b[2]}m')
+					elif t != fg:
+						out.append(f'\033[38;2;{t[0]};{t[1]};{t[2]}m')
+					elif b != bg:
+						out.append(f'\033[48;2;{b[0]};{b[1]};{b[2]}m')
+					fg, bg = t, b
+					out.append(HALF)
 					run = x + 1
 		self._shadow = shadow
 		if out:

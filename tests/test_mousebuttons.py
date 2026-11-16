@@ -57,6 +57,47 @@ class ButtonDragTest(unittest.TestCase):
 		self.assertIn(('a', 'B1', 0x100), self.events)
 
 
+class MotionCompressionTest(unittest.TestCase):
+
+	def setUp(self):
+		self.root, self.scr = makeApp(40, 12)
+		self.a = tk.Frame(self.root, width=20, height=8)
+		self.a.pack()
+		attach(self.root)
+		self.events = []
+		for seq in ('<Button-1>', '<B1-Motion>', '<ButtonRelease-1>'):
+			self.a.bind(seq, lambda e, s=seq: self.events.append((s, e.x, e.y)))
+
+	def sgr(self, b, x, y, final='M'):
+		self.scr.keys.extend([27] + [ord(c) for c in
+			f'[<{b};{x + self.a._x + 1};{y + self.a._y + 1}{final}'])
+
+	def dispatch(self):
+		root = self.root
+		while self.scr.keys or root._pendingKeys:
+			root._handleInput(root._readKey(self.scr))
+
+	def test_burstDeliversLastMotion(self):
+		self.sgr(0, 1, 1)			# press
+		for x in range(2, 8):
+			self.sgr(32, x, 1)		# B1 drag reports
+		self.sgr(0, 7, 1, 'm')			# release
+		self.dispatch()
+		self.assertEqual([e[0] for e in self.events],
+			['<Button-1>', '<B1-Motion>', '<ButtonRelease-1>'])
+		self.assertEqual(self.events[1][1:], (7, 1))
+
+	def test_keyStopsCompression(self):
+		self.sgr(0, 1, 1)
+		self.sgr(32, 2, 1)
+		self.scr.keys.append(ord('q'))
+		self.sgr(32, 3, 1)
+		self.sgr(0, 3, 1, 'm')
+		self.dispatch()
+		self.assertEqual([e[1:] for e in self.events if e[0] == '<B1-Motion>'],
+			[(2, 1), (3, 1)])
+
+
 class ConfigurePixelTest(unittest.TestCase):
 
 	def setUp(self):
