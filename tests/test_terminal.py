@@ -153,10 +153,12 @@ class TerminalTest(unittest.TestCase):
 				self.assertIn("GOT ['press', 6, 9]", out)
 
 
-def queryInPty(reply, timeout=5.0):
+def queryInPty(reply, timeout=5.0, daFirst=False):
 	"""Run tktext's terminal background query in a pty whose 'terminal'
 	(this process) answers the OSC 11 query with *reply* (None: it does
-	not know OSC 11) and DA1 always.  Returns (child output, seconds)."""
+	not know OSC 11) and DA1 always.  daFirst: DA1 is answered first and
+	the OSC 11 reply comes later, like through screen/tmux.
+	Returns (child output, seconds)."""
 	script = ('import sys, time; sys.path.insert(0, %r)\n'
 		'from tktext import _termbg\n'
 		't = time.monotonic()\n'
@@ -185,9 +187,13 @@ def queryInPty(reply, timeout=5.0):
 		out.extend(data)
 		if not answered and b'\x1b[c' in out:
 			answered = True
+			if daFirst:
+				os.write(fd, b'\x1b[?62;22c')
+				time.sleep(0.03)
 			if reply is not None:
 				os.write(fd, b'\x1b]11;' + reply + b'\x1b\\')
-			os.write(fd, b'\x1b[?62;22c')
+			if not daFirst:
+				os.write(fd, b'\x1b[?62;22c')
 	os.waitpid(pid, 0)
 	os.close(fd)
 	return out.decode('utf-8', 'replace')
@@ -215,7 +221,12 @@ class TerminalBackgroundTest(unittest.TestCase):
 		out = queryInPty(None)
 		res = self.result(out)
 		self.assertTrue(res.startswith('None True'), out)
-		self.assertLess(float(res.split()[-1]), 0.14)	# did not wait the timeout
+		self.assertLess(float(res.split()[-1]), 0.3)	# did not wait the timeout
+
+	def test_osc11_after_da1(self):
+		out = queryInPty(b'rgb:ffff/ffff/ffff', daFirst=True)
+		self.assertTrue(self.result(out).startswith('(255, 255, 255) False'), out)
+		self.assertNotIn(']11;rgb', out.split('RESULT', 1)[1])	# not echoed
 
 
 @unittest.skipIf(pty is None or not os.path.exists(FLAIR),

@@ -31,13 +31,15 @@ except ImportError:		# not POSIX
 from ._colors import _BASIC_RGB
 
 QUERY_TIMEOUT	= 0.5		# seconds to wait for the terminal's reply (DA1 ends it earlier)
+DA1_GRACE	= 0.1		# seconds to wait for a late OSC 11 reply after DA1
 
 _override	= 'auto'	# install(background=…): 'auto', 'dark', 'light', '#rrggbb'
 _cached		= False		# detection done
 _background	= None		# detected (r, g, b) or None
 
-_OSC_RE = re.compile(rb'\x1b\]11;rgb:([0-9a-fA-F]{1,4})/([0-9a-fA-F]{1,4})/([0-9a-fA-F]{1,4})')
-_DA1_RE = re.compile(rb'\x1b\[\?[0-9;]*c')
+_OSC_RE     = re.compile(rb'\x1b\]11;rgb:([0-9a-fA-F]{1,4})/([0-9a-fA-F]{1,4})/([0-9a-fA-F]{1,4})')
+_DA1_RE     = re.compile(rb'\x1b\[\?[0-9;]*c')
+_OSC_END_RE = re.compile(rb'\x1b\]11;[^\x07\x1b]*(\x07|\x1b\\)')
 
 
 def parseOscReply(data: bytes):
@@ -113,8 +115,12 @@ def queryTerminal(timeout: float = QUERY_TIMEOUT):
 				if not chunk:
 					break
 				data.extend(chunk)
-				if _DA1_RE.search(data):
+				if _OSC_END_RE.search(data):
 					break
+				# screen/tmux answer DA1 themselves before the OSC 11
+				# reply of the outer terminal: wait a little for it
+				if _DA1_RE.search(data):
+					end = min(end, time.monotonic() + DA1_GRACE)
 			return parseOscReply(bytes(data))
 		finally:
 			termios.tcsetattr(fd, termios.TCSAFLUSH, saved)
