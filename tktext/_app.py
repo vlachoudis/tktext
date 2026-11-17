@@ -906,6 +906,10 @@ class Tk(Wm, Frame):
 					or (top is not None and top._hasBinding(virt)):
 				widget.event_generate(virt)
 				return 'break'
+			# unbound: the class behaviour, like Tk's Text/Entry <<Copy>>
+			if widget._handleVirtual(virt):
+				widget._markDirty()
+				return 'break'
 		return None
 
 	_KEY_NORMALISE = {

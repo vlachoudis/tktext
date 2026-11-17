@@ -900,6 +900,30 @@ class ClipboardTest(unittest.TestCase):
 		t.event_generate('<<Paste>>')
 		self.assertEqual(t.get('1.0', 'end-1c'), 'hello world\nsecond')
 
+	def test_text_copy_unbound_toplevel(self):
+		"""Ctrl-C (event_add <<Copy>>) in a Toplevel without a <<Copy>>
+		binding (flair's ReportDialog) copies by the Text class behaviour
+		and does not close the dialog as an interrupt."""
+		root, scr = makeApp(60, 20)
+		root.event_add('<<Copy>>', '<Control-Key-c>')
+		root.bind('<<Copy>>', lambda e: None)
+		top    = tk.Toplevel(root)
+		top.transient(root)
+		closed = []
+		top.protocol('WM_DELETE_WINDOW', lambda: closed.append(1))
+		t = tk.Text(top, height=4)
+		t.pack()
+		t.insert('1.0', 'Traceback line\nsecond')
+		attach(root)
+		top.grab_set()
+		t.focus_set()
+		root._update(force=True)
+		t.tag_add('sel', '1.0', '1.9')
+		root.clipboard_clear()
+		press(root, 3)				# Ctrl-C
+		self.assertEqual(root.clipboard_get(), 'Traceback')
+		self.assertEqual(closed, [])
+
 	def test_text_cut_paste(self):
 		root, scr = makeApp(40, 12)
 		t = tk.Text(root, height=4)
