@@ -31,7 +31,8 @@ class Dialog:
 		if app is not None:
 			result = _MsgDialog(app, str(cnf.get('title', '')),
 				str(cnf.get('text', '')), buttons, str(cnf.get('bitmap', '')),
-				default=default).run()
+				default=default,
+				parent=master).run()
 			self.num = -1 if result is None else result
 
 	def destroy(self):

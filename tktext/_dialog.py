@@ -50,10 +50,27 @@ class _Dialog:
 	to it.
 	"""
 
-	def __init__(self, app):
+	def __init__(self, app, parent=None):
 		self._app    = app
+		self._parent = parent if hasattr(parent, '_getApp') else None
 		self._done   = False
 		self._result = None
+
+	def _place(self, w: int, h: int):
+		"""Position of a w x h dialog: centred over its parent widget like
+		tk::PlaceWindow, else over the screen, and kept on screen."""
+		app = self._app
+		p   = self._parent
+		if p is not None and not p._destroyed and p._isMapped() \
+				and p._width > 0 and p._height > 0:
+			x = p._x + (p._width  - w) // 2
+			y = p._y + (p._height - h) // 2
+		else:
+			x = (app._width  - w) // 2
+			y = (app._height - h) // 2
+		x = max(0, min(x, app._width  - w))
+		y = max(0, min(y, app._height - h))
+		return (x, y)
 
 	def _dismiss(self, result):
 		self._result = result
@@ -117,8 +134,8 @@ class _MsgDialog(_Dialog):
 	_ICONS = {'info': 'i', 'warning': '!', 'error': 'X', 'question': '?'}
 
 	def __init__(self, app, title: str, message: str,
-			buttons: list, icon: str = '', default=None):
-		super().__init__(app)
+			buttons: list, icon: str = '', default=None, parent=None):
+		super().__init__(app, parent)
 		self._title   = str(title)
 		self._message = str(message)
 		self._buttons = buttons	# list of (label, return_value)
@@ -151,9 +168,7 @@ class _MsgDialog(_Dialog):
 		return (w, h)
 
 	def _pos(self):
-		app  = self._app
-		w, h = self._size()
-		return (max(0, (app._width - w) // 2), max(0, (app._height - h) // 2))
+		return self._place(*self._size())
 
 	def _buttonSpans(self):
 		w, h  = self._size()
@@ -261,8 +276,8 @@ class _FileDialog(_Dialog):
 	def __init__(self, app, title: str, mode: str = 'open',
 			initialdir: str = None, initialfile: str = '',
 			filetypes=None, defaultextension: str = '',
-			multiple: bool = False):
-		super().__init__(app)
+			multiple: bool = False, parent=None):
+		super().__init__(app, parent)
 		self._title      = title
 		self._mode       = mode		# 'open', 'save', 'dir'
 		startDir         = os.path.expanduser(initialdir or os.getcwd())
@@ -315,9 +330,7 @@ class _FileDialog(_Dialog):
 		return (min(w, app._width), min(h, app._height))
 
 	def _pos(self):
-		app  = self._app
-		w, h = self._size()
-		return (max(0, (app._width - w) // 2), max(0, (app._height - h) // 2))
+		return self._place(*self._size())
 
 	def _geometry(self):
 		w, h   = self._size()

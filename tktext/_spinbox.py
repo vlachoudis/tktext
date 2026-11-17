@@ -97,6 +97,19 @@ class Spinbox(Entry):
 		return f'{v:g}'
 
 	def _increment(self, direction: int):
+		"""Up/Down, the arrows and invoke() generate <<Increment>> or
+		<<Decrement>>; like ttk its class behaviour spins the value"""
+		self.event_generate('<<Increment>>' if direction > 0 else '<<Decrement>>')
+
+	def _handleVirtual(self, sequence):
+		if sequence in ('<<Increment>>', '<<Decrement>>'):
+			if self._opts.get('state') == 'disabled':
+				return False
+			self._spin(+1 if sequence == '<<Increment>>' else -1)
+			return True
+		return super()._handleVirtual(sequence)
+
+	def _spin(self, direction: int):
 		vals = self._values()
 		if vals:
 			n = len(vals)
@@ -123,7 +136,6 @@ class Spinbox(Entry):
 				else:
 					v = max(lo, min(hi, v))
 			self.set(self._format(v))
-		self._fireVirtual('<<Increment>>' if direction > 0 else '<<Decrement>>')
 		cmd = self._opts.get('command')
 		if callable(cmd):
 			cmd()

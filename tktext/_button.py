@@ -207,6 +207,14 @@ class Button(Widget):
 			return True
 		return False
 
+	def _handleVirtual(self, sequence):
+		"""Tk class binding: <<Invoke>> activates like Return/space (a
+		Menubutton posts its menu)"""
+		if sequence != '<<Invoke>>' or self._opts.get('state') == 'disabled':
+			return False
+		self._press()
+		return True
+
 	def _handleMouse(self, mx, my, bstate):
 		if self._opts.get('state') == 'disabled':
 			return False

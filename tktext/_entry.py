@@ -410,6 +410,64 @@ class Entry(Widget):
 		self._selAnchor = None
 		return True
 
+	# Tk's Entry class bindings of the movement virtual events
+	_VIRTUAL_KEYS = {
+		'<<PrevChar>>':		KEY_LEFT,
+		'<<NextChar>>':		KEY_RIGHT,
+		'<<LineStart>>':	KEY_HOME,
+		'<<LineEnd>>':		KEY_END,
+		'<<SelectPrevChar>>':	KEY_SHIFT_LEFT,
+		'<<SelectNextChar>>':	KEY_SHIFT_RIGHT,
+		'<<SelectLineStart>>':	KEY_SHIFT_HOME,
+		'<<SelectLineEnd>>':	KEY_SHIFT_END,
+	}
+
+	def _handleVirtual(self, sequence):
+		"""Tk Entry class bindings of the movement, clipboard, selection
+		and traversal events; like Tk a -show (password) entry does not copy"""
+		key = self._VIRTUAL_KEYS.get(sequence)
+		if key is not None:
+			return Entry._handleKey(self, key)
+		state    = self._opts.get('state', 'normal')
+		editable = state == 'normal'
+		if sequence == '<<TraverseIn>>':
+			buf             = self._getBuf()
+			self._selAnchor = 0
+			self._sel       = (0, len(buf)) if buf else None
+			self._cur       = len(buf)
+		elif sequence in ('<<Copy>>', '<<Cut>>'):
+			if self._sel is None or self._opts.get('show'):
+				return False
+			self.clipboard_clear()
+			self.clipboard_append(self.selectionGet())
+			if sequence == '<<Cut>>' and editable:
+				self._deleteSelection()
+		elif sequence == '<<Paste>>':
+			if not editable:
+				return False
+			try:
+				text = self.clipboard_get()
+			except TclError:
+				return False
+			self._deleteSelection()
+			self.insert(self._cur, text)
+		elif sequence == '<<SelectAll>>':
+			if state == 'disabled':
+				return False
+			buf             = self._getBuf()
+			self._selAnchor = 0
+			self._sel       = (0, len(buf)) if buf else None
+		elif sequence == '<<SelectNone>>':
+			self._sel = None
+		elif sequence == '<<Clear>>':
+			if not editable or not self._deleteSelection():
+				return False
+		else:
+			return False
+		self._scrollToCursor()
+		self._markDirty()
+		return True
+
 	def _preRender(self):
 		self._clampCur()
 		buf = self._getBuf()

@@ -772,7 +772,7 @@ class Tk(Wm, Frame):
 			idx = (focusable.index(self._focusWidget) + 1) % len(focusable)
 		else:
 			idx = 0
-		self._setFocus(focusable[idx])
+		self._tabTo(focusable[idx])
 
 	def _focusPrev(self):
 		focusable = self._focusables()
@@ -782,7 +782,16 @@ class Tk(Wm, Frame):
 			idx = (focusable.index(self._focusWidget) - 1) % len(focusable)
 		else:
 			idx = len(focusable) - 1
-		self._setFocus(focusable[idx])
+		self._tabTo(focusable[idx])
+
+	def _tabTo(self, widget):
+		"""Keyboard traversal to *widget*, like tk::TabToWindow:
+		<<TraverseOut>> on the old focus, <<TraverseIn>> on the new one"""
+		old = self._focusWidget
+		if old is not None and old is not widget and not old._destroyed:
+			old.event_generate('<<TraverseOut>>')
+		self._setFocus(widget)
+		widget.event_generate('<<TraverseIn>>')
 
 	def _focusInto(self, win):
 		"""Move the focus into window *win* (last focus or first widget)."""

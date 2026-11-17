@@ -2214,6 +2214,70 @@ class Text(_ScrollMixin, Widget):
 		self._cur       = (s[0], s[1])
 		return True
 
+	# Tk's Text class bindings of the movement virtual events
+	_VIRTUAL_KEYS = {
+		'<<PrevChar>>':		KEY_LEFT,
+		'<<NextChar>>':		KEY_RIGHT,
+		'<<PrevLine>>':		KEY_UP,
+		'<<NextLine>>':		KEY_DOWN,
+		'<<LineStart>>':	KEY_HOME,
+		'<<LineEnd>>':		KEY_END,
+		'<<SelectPrevChar>>':	KEY_SHIFT_LEFT,
+		'<<SelectNextChar>>':	KEY_SHIFT_RIGHT,
+		'<<SelectPrevLine>>':	KEY_SHIFT_UP,
+		'<<SelectNextLine>>':	KEY_SHIFT_DOWN,
+		'<<SelectLineStart>>':	KEY_SHIFT_HOME,
+		'<<SelectLineEnd>>':	KEY_SHIFT_END,
+	}
+
+	def _handleVirtual(self, sequence):
+		"""Tk Text class bindings of the movement, clipboard, selection and
+		undo events; a disabled text still moves, copies and selects"""
+		key = self._VIRTUAL_KEYS.get(sequence)
+		if key is not None:
+			return self._handleKey(key)
+		editable = self._opts.get('state', 'normal') != 'disabled'
+		if sequence == '<<Undo>>':
+			return editable and self.editUndo()
+		if sequence == '<<Redo>>':
+			return editable and self.editRedo()
+		if sequence in ('<<Copy>>', '<<Cut>>'):
+			text = self.selGet()
+			if not text:
+				return False
+			self.clipboard_clear()
+			self.clipboard_append(text)
+			if sequence == '<<Cut>>' and editable:
+				self._deleteSelection()
+				self._scrollToCursor()
+		elif sequence == '<<Paste>>':
+			if not editable:
+				return False
+			try:
+				text = self.clipboard_get()
+			except TclError:
+				return False
+			self._deleteSelection()
+			self._beginEdit()
+			self._cur       = self._rawInsert(self._cur, text)
+			self._lastEdit  = None
+			self._selAnchor = None
+			self._scrollToCursor()
+		elif sequence == '<<SelectAll>>':
+			self._selAnchor = (0, 0)
+			self._setSel((0, 0), self._lastPos())
+		elif sequence == '<<SelectNone>>':
+			self._setSel(None, None)
+			self._selAnchor = None
+		elif sequence == '<<Clear>>':
+			if not editable or not self._deleteSelection():
+				return False
+			self._scrollToCursor()
+		else:
+			return False
+		self._markDirty()
+		return True
+
 	# ------------------------------------------------------------------
 	# Mouse input
 	# ------------------------------------------------------------------

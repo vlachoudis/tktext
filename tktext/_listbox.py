@@ -477,6 +477,15 @@ class Listbox(_ScrollMixin, Widget):
 		key = self._VIRTUAL_KEYS.get(sequence)
 		if key is not None:
 			return self._handleKey(key)
+		if sequence == '<<Copy>>':
+			# like Tk only when the listbox exports its selection
+			export = self._opts.get('exportselection')
+			if not self._sel or export in (False, 0, '0', 'false', ''):
+				return False
+			self.clipboard_clear()
+			self.clipboard_append('\n'.join(str(self._lbItems[i])
+				for i in sorted(self._sel) if i < len(self._lbItems)))
+			return True
 		mode = self._opts.get('selectmode', 'browse')
 		if sequence == '<<SelectAll>>' and mode in ('multiple', 'extended'):
 			self._sel = set(range(len(self._lbItems)))

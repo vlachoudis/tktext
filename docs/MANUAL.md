@@ -176,6 +176,8 @@ n    = simpledialog.askinteger('Count', 'How many?', minvalue=1)
 `colorchooser`: `askcolor`, `Chooser`.  `dialog.Dialog` (classic Tk dialog,
 the chosen button in `num`); the class dialogs derive from
 `commondialog.Dialog`.
+Like `tk::PlaceWindow`, message and file dialogs are centred over their
+`parent=` widget (kept on screen), otherwise over the screen.
 
 The emulated Tcl/Tk reports patchlevel `8.6.18` (`info patchlevel`,
 `root.info_patchlevel()`); `tktext.Tcl()` is an interpreter without windows.
@@ -528,6 +530,22 @@ or light terminal, to `_BACKGROUND_THEMES['dark']` / `['light']`.
   `clip.exe`/`powershell.exe Get-Clipboard`, else the OSC 52 escape sequence
   (copy only; wrapped for GNU screen; xterm needs `disallowedWindowOps`
   without `SetSelection`, macOS Terminal.app ignores it).
+* Class bindings of the virtual events, like Tk (`event_generate('<<Copy>>')`,
+  or a key added with `event_add()`; a widget binding returning `'break'`
+  stops them):
+  * Text and Entry (Spinbox, Combobox): `<<Copy>>`, `<<Cut>>`, `<<Paste>>`,
+    `<<Clear>>`, `<<SelectAll>>`, `<<SelectNone>>`, `<<PrevChar>>`,
+    `<<NextChar>>`, `<<LineStart>>`, `<<LineEnd>>` and their `<<Select…>>`
+    forms; Text also `<<PrevLine>>`, `<<NextLine>>`, `<<Undo>>`, `<<Redo>>`.
+    A disabled Text still copies, a `show=` Entry does not.  The word and
+    paragraph events are not handled.
+  * Entry `<<TraverseIn>>` selects all; Tab/Shift-Tab traversal generates
+    `<<TraverseOut>>` on the old and `<<TraverseIn>>` on the new focus widget.
+  * Listbox `<<Copy>>` (selected items, one per line, only with
+    `exportselection`).
+  * Button, Menubutton, Checkbutton, Radiobutton `<<Invoke>>`.
+  * Spinbox `<<Increment>>`/`<<Decrement>>` spin the value: Up/Down and the
+    arrows generate them first, as in ttk.
 
 ---
 

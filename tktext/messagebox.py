@@ -41,7 +41,7 @@ def _run(title, message, buttons, icon='', **kw):
 	if app is None:
 		return buttons[0][1]
 	return _MsgDialog(app, title or '', message or '', buttons, icon,
-		default=kw.get('default')).run()
+		default=kw.get('default'), parent=kw.get('parent')).run()
 
 
 # ------------------------------------------------------------------

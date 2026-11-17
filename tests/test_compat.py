@@ -1,6 +1,7 @@
 """tkinter compatibility layer: install(), Toplevel, pixel mode, Canvas,
 PanedWindow, option database, class bindings, queued virtual events."""
 import os
+import curses
 import subprocess
 import sys
 import unittest
@@ -873,6 +874,194 @@ class ClipboardTest(unittest.TestCase):
 		root.clipboard_clear()
 		self.assertRaises(tk.TclError, root.clipboard_get)
 		self.assertRaises(tk.TclError, root.clipboard_get, type='TARGETS')
+
+	def test_text_copy_disabled(self):
+		"""Ctrl-C bound as <<Copy>> (event_add) on the toplevel, like flair:
+		the Text class behaviour copies even from a disabled text."""
+		root, scr = makeApp(40, 12)
+		calls = []
+		root.event_add('<<Copy>>', '<Control-Key-c>')
+		root.bind('<<Copy>>', lambda e: calls.append(e.widget))
+		t = tk.Text(root, height=4)
+		t.pack()
+		t.insert('1.0', 'hello world\nsecond')
+		t.config(state='disabled')
+		attach(root)
+		t.focus_set()
+		root._update(force=True)
+		t.tag_add('sel', '1.6', '2.3')
+		root.clipboard_clear()
+		press(root, 3)				# Ctrl-C
+		self.assertEqual(root.clipboard_get(), 'world\nsec')
+		self.assertEqual(calls, [t])
+		# disabled: <<Cut>> copies but keeps the text
+		t.event_generate('<<Cut>>')
+		self.assertEqual(t.get('1.0', 'end-1c'), 'hello world\nsecond')
+		t.event_generate('<<Paste>>')
+		self.assertEqual(t.get('1.0', 'end-1c'), 'hello world\nsecond')
+
+	def test_text_cut_paste(self):
+		root, scr = makeApp(40, 12)
+		t = tk.Text(root, height=4)
+		t.pack()
+		t.insert('1.0', 'abc def')
+		attach(root)
+		t.tag_add('sel', '1.0', '1.4')
+		t.event_generate('<<Cut>>')
+		self.assertEqual(root.clipboard_get(), 'abc ')
+		self.assertEqual(t.get('1.0', 'end-1c'), 'def')
+		t.mark_set('insert', 'end-1c')
+		t.event_generate('<<Paste>>')
+		self.assertEqual(t.get('1.0', 'end-1c'), 'defabc ')
+		self.assertEqual(t.index('insert'), '1.7')
+		t.event_generate('<<SelectAll>>')
+		self.assertEqual(t.selGet(), 'defabc ')
+		t.event_generate('<<Clear>>')
+		self.assertEqual(t.get('1.0', 'end-1c'), '')
+
+	def test_entry_copy_paste(self):
+		root, scr = makeApp(40, 12)
+		e = tk.Entry(root)
+		e.pack()
+		e.insert(0, 'hello')
+		attach(root)
+		e.selection_range(1, 3)
+		e.event_generate('<<Copy>>')
+		self.assertEqual(root.clipboard_get(), 'el')
+		e.event_generate('<<Cut>>')
+		self.assertEqual(e.get(), 'hlo')
+		e.icursor('end')
+		e.event_generate('<<Paste>>')
+		self.assertEqual(e.get(), 'hloel')
+		# a password entry does not copy
+		root.clipboard_clear()
+		e.config(show='*')
+		e.selection_range(0, 2)
+		e.event_generate('<<Copy>>')
+		self.assertRaises(tk.TclError, root.clipboard_get)
+
+	def test_listbox_copy(self):
+		root, scr = makeApp(40, 12)
+		lb = tk.Listbox(root, selectmode='extended')
+		lb.pack()
+		for item in ('alpha', 'beta', 'gamma'):
+			lb.insert('end', item)
+		attach(root)
+		lb.selection_set(0)
+		lb.selection_set(2)
+		root.clipboard_clear()
+		lb.event_generate('<<Copy>>')
+		self.assertEqual(root.clipboard_get(), 'alpha\ngamma')
+		root.clipboard_clear()
+		lb.config(exportselection=False)
+		lb.event_generate('<<Copy>>')
+		self.assertRaises(tk.TclError, root.clipboard_get)
+
+
+class VirtualEventTest(unittest.TestCase):
+	"""Tk class bindings of the virtual events (text.tcl, entry.tcl,
+	button.tcl, ttk/spinbox.tcl)."""
+
+	def test_text_undo_redo(self):
+		root, scr = makeApp(40, 12)
+		root.event_add('<<Undo>>', '<Control-Key-z>')
+		root.bind('<<Undo>>', lambda e: None)
+		t = tk.Text(root, height=4, undo=True)
+		t.pack()
+		attach(root)
+		t.focus_set()
+		root._update(force=True)
+		t.insert('1.0', 'abc')
+		t.edit_separator()
+		t.insert('end', 'def')
+		press(root, 26)				# Ctrl-Z
+		self.assertEqual(t.get('1.0', 'end-1c'), 'abc')
+		t.event_generate('<<Redo>>')
+		self.assertEqual(t.get('1.0', 'end-1c'), 'abcdef')
+		t.config(state='disabled')
+		t.event_generate('<<Undo>>')
+		self.assertEqual(t.get('1.0', 'end-1c'), 'abcdef')
+
+	def test_text_entry_movement(self):
+		root, scr = makeApp(40, 12)
+		t = tk.Text(root, height=4)
+		t.pack()
+		e = tk.Entry(root)
+		e.pack()
+		t.insert('1.0', 'one\ntwo')
+		e.insert(0, 'hello')
+		attach(root)
+		t.mark_set('insert', '2.1')
+		t.event_generate('<<LineStart>>')
+		self.assertEqual(t.index('insert'), '2.0')
+		t.event_generate('<<SelectLineEnd>>')
+		self.assertEqual(t.selGet(), 'two')
+		t.event_generate('<<PrevLine>>')
+		self.assertEqual(t.index('insert').split('.')[0], '1')
+		e.icursor(2)
+		e.event_generate('<<NextChar>>')
+		self.assertEqual(e.index('insert'), 3)
+		e.event_generate('<<SelectLineEnd>>')
+		self.assertEqual(e.selection_get(), 'lo')
+		e.event_generate('<<LineStart>>')
+		self.assertEqual(e.index('insert'), 0)
+
+	def test_invoke(self):
+		root, scr = makeApp(40, 12)
+		calls = []
+		b  = tk.Button(root, text='B', command=lambda: calls.append('b'))
+		v  = tk.IntVar(root, 0)
+		cb = tk.Checkbutton(root, text='C', variable=v)
+		r  = tk.StringVar(root, '')
+		rb = tk.Radiobutton(root, text='R', variable=r, value='x')
+		for w in (b, cb, rb):
+			w.pack()
+		attach(root)
+		b.event_generate('<<Invoke>>')
+		cb.event_generate('<<Invoke>>')
+		rb.event_generate('<<Invoke>>')
+		self.assertEqual(calls, ['b'])
+		self.assertEqual(v.get(), 1)
+		self.assertEqual(r.get(), 'x')
+		b.config(state='disabled')
+		b.event_generate('<<Invoke>>')
+		self.assertEqual(calls, ['b'])
+
+	def test_spinbox_increment(self):
+		root, scr = makeApp(40, 12)
+		s = tk.Spinbox(root, from_=0, to=10)
+		s.pack()
+		attach(root)
+		s.focus_set()
+		root._update(force=True)
+		s.event_generate('<<Increment>>')
+		self.assertEqual(s.get(), '1')
+		press(root, curses.KEY_UP)		# one spin, not two
+		self.assertEqual(s.get(), '2')
+		s.event_generate('<<Decrement>>')
+		self.assertEqual(s.get(), '1')
+		# a widget binding returning 'break' cancels the spin, like ttk
+		s.bind('<<Increment>>', lambda e: 'break')
+		press(root, curses.KEY_UP)
+		self.assertEqual(s.get(), '1')
+
+	def test_traverse_in(self):
+		root, scr = makeApp(40, 12)
+		seen = []
+		b = tk.Button(root, text='B')
+		e = tk.Entry(root)
+		b.pack()
+		e.pack()
+		e.insert(0, 'hello')
+		b.bind('<<TraverseOut>>', lambda ev: seen.append('out'))
+		attach(root)
+		b.focus_set()
+		root._update(force=True)
+		press(root, 9)				# Tab
+		self.assertIs(root.focus_get(), e)
+		self.assertEqual(seen, ['out'])
+		self.assertEqual(e.selection_get(), 'hello')
+		self.assertEqual(e.index('insert'), 5)
 
 
 class RawKeysTest(unittest.TestCase):

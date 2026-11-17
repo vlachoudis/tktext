@@ -487,6 +487,24 @@ class DialogTest(unittest.TestCase):
 		self.assertTrue(messagebox.askyesno('Q', 'Sure?'))
 		self.assertFalse(root._postedDialogs)
 
+	def test_messagebox_centred_on_parent(self):
+		root, scr = makeApp(80, 24)
+		top  = tk.Frame(root, height=4)
+		top.pack(fill=tk.X)
+		tk.Frame(root).pack(fill=tk.BOTH, expand=True)
+		attach(root)
+		dlg  = messagebox._MsgDialog(root, 'T', 'Sure?',
+			[('Yes', True), ('No', False)], parent=top)
+		w, h = dlg._size()
+		x, y = dlg._pos()
+		self.assertEqual(x, top._x + (top._width - w) // 2)
+		self.assertEqual(y, max(0, top._y + (top._height - h) // 2))
+		self.assertLess(y, (root._height - h) // 2)
+		# without a parent: centred on the screen
+		dlg  = messagebox._MsgDialog(root, 'T', 'Sure?',
+			[('Yes', True), ('No', False)])
+		self.assertEqual(dlg._pos(), ((80 - w) // 2, (24 - h) // 2))
+
 	def test_timers_run_while_dialog_open(self):
 		root, scr = makeApp(60, 16)
 		attach(root)

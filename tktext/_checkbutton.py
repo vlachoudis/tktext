@@ -192,6 +192,13 @@ class Checkbutton(Widget):
 			return True
 		return False
 
+	def _handleVirtual(self, sequence):
+		"""Tk class binding: <<Invoke>> toggles (selects a Radiobutton)"""
+		if sequence != '<<Invoke>>' or self._opts.get('state') == 'disabled':
+			return False
+		self.invoke()
+		return True
+
 	def _handleMouse(self, mx: int, my: int, bstate: int) -> bool:
 		if self._opts.get('state') == 'disabled':
 			return False

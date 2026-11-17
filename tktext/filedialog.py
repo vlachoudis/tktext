@@ -23,7 +23,7 @@ def _run(title, mode, initialdir=None, initialfile='',
 	result = _FileDialog(app, title, mode=mode,
 		initialdir=initialdir, initialfile=initialfile or '',
 		filetypes=filetypes, defaultextension=defaultextension or '',
-		multiple=multiple).run()
+		multiple=multiple, parent=parent).run()
 	if multiple:
 		return (result,) if result else ()
 	return result or ''
