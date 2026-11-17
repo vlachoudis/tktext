@@ -94,7 +94,7 @@ to the default root.
 | `Checkbutton`, `Radiobutton` | `[X]` / `( )` indicators |
 | `Scale`, `Scrollbar`, `Progressbar`, `Separator` | |
 | `Notebook` | Tabs |
-| `Menu`, `OptionMenu` | Popup, cascade and menubar menus |
+| `Menu`, `OptionMenu` | Popup, cascade and menubar menus; an entry with `columnbreak=1` starts a new column |
 | `Canvas` | Items drawn on the character grid |
 | `PanedWindow` | Draggable sashes |
 | `PhotoImage`, `BitmapImage` | Size only; an icon-only widget shows `image.glyph` if set (an image > 24 px high in pixel mode as a box of its size, at least 5x2 cells: `│ + │`/`│   │`), else (when clickable) `image.alt` (or `▪`); `image.glyph` (default `▾▴◂▸` for `triangle_down`… names) is also drawn beside the text with `compound=left/right` (in pixel mode an image without a glyph shows `·` there, so the texts stay aligned; `glyph=' '` keeps it blank) |
@@ -202,6 +202,7 @@ A full comparison with tkinter is in `docs/TKINTER_DIFF.md`.
 | Escape | Close the open menu / drop-down |
 | Ctrl-C | Dismiss open dialogs, otherwise close the active window (calls its `WM_DELETE_WINDOW` protocol handler; on the root, quits `mainloop`) |
 | Up / Down on an OptionMenu | Cycle through its values |
+| Left / Right in a multi-column menu | Move to the nearest entry of the previous / next column (Right opens a cascade first) |
 
 Ctrl-S and Ctrl-Q reach the application (terminal flow control is switched
 off while tktext runs).

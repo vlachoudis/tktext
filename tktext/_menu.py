@@ -28,6 +28,7 @@ _ITEM_DEFAULTS = {
 	'value':	None,
 	'onvalue':	1,
 	'offvalue':	0,
+	'columnbreak':	0,
 }
 
 
@@ -188,11 +189,18 @@ class Menu(Widget):
 	def yposition(self, index):
 		"""Y coordinate of the top of entry *index* (screen units)."""
 		from . import _core
-		i = self.index(index)
-		return (max(0, i if i is not None else 0) + self._border()) * _core.PY
+		i = self._resolveIndex(index)
+		cells, _ = self._layout()
+		row = cells[i][1] if 0 <= i < len(cells) else 0
+		return (row + self._border()) * _core.PY
 
 	def xposition(self, index):
-		return 0
+		"""X coordinate of the left of entry *index* (screen units)."""
+		from . import _core
+		i = self._resolveIndex(index)
+		cells, _ = self._layout()
+		x = cells[i][0] if 0 <= i < len(cells) else 0
+		return (x + self._border()) * _core.PX
 
 	def index(self, index: object):
 		"""Return integer index for *index* (None for 'none')."""
@@ -303,40 +311,75 @@ class Menu(Widget):
 			o = other.get('menu')
 			if j != i and o is not None and o._posted:
 				o.unpost()
-		px, py, mw, _ = self._screenRect()
-		bd   = self._border()
-		subX = px + mw
-		app  = self._getApp()
+		px, py, _, _ = self._screenRect()
+		bd        = self._border()
+		cells, cw = self._layout()
+		x, row, c = cells[i]
+		subX      = px + bd + x + cw[c] + bd
+		app       = self._getApp()
 		if app is not None and subX + sub._menuWidth() > app._width:
-			subX = max(0, px - sub._menuWidth())
+			subX = max(0, px + x - sub._menuWidth())
 		sub._parentMenu = self
-		sub._post(subX, py + bd + i - sub._border())
+		sub._post(subX, py + bd + row - sub._border())
 		self._active = i
 
 	# ------------------------------------------------------------------
 	# Geometry helpers
 	# ------------------------------------------------------------------
 
+	@staticmethod
+	def _itemWidth(item) -> int:
+		"""Cells needed by *item* inside the borders."""
+		itype = item['type']
+		if itype == 'separator':
+			return 0
+		label  = str(item.get('label', ''))
+		accel  = str(item.get('accelerator', '') or '')
+		prefix = 4 if itype in ('checkbutton', 'radiobutton') else 0
+		suffix = 2 if itype == 'cascade' else 0	# ' ▶'
+		accelW = len(accel) + 2 if accel else 0
+		return prefix + len(label) + accelW + suffix + 2
+
+	def _layout(self):
+		"""Column layout like Tk: an item with columnbreak starts a new column.
+		Return (cells, widths): cells[i] = (x, row, column) relative to the
+		inside of the border, widths[c] the width of column c."""
+		cells  = []
+		widths = [0]
+		x      = 0
+		row    = 0
+		for i, item in enumerate(self._menuItems):
+			if i > 0 and item.get('columnbreak'):
+				x  += max(widths[-1], 4)
+				row = 0
+				widths.append(0)
+			cells.append((x, row, len(widths)-1))
+			widths[-1] = max(widths[-1], self._itemWidth(item))
+			row += 1
+		widths = [max(w, 4) for w in widths]
+		return cells, widths
+
 	def _menuWidth(self) -> int:
 		"""Return total menu width including borders."""
-		bd   = self._border()
-		maxW = 0
-		for item in self._menuItems:
-			if item['type'] == 'separator':
-				continue
-			label  = str(item.get('label', ''))
-			accel  = str(item.get('accelerator', '') or '')
-			itype  = item['type']
-			prefix = 4 if itype in ('checkbutton', 'radiobutton') else 0
-			suffix = 2 if itype == 'cascade' else 0	# ' ▶'
-			accelW = len(accel) + 2 if accel else 0
-			w = prefix + len(label) + accelW + suffix + 2
-			maxW = max(maxW, w)
-		return max(maxW, 4) + 2*bd
+		return sum(self._layout()[1]) + 2*self._border()
 
 	def _menuHeight(self) -> int:
 		"""Return total menu height including borders."""
-		return len(self._menuItems) + 2*self._border()
+		rows = max((r+1 for _, r, _ in self._layout()[0]), default=0)
+		return rows + 2*self._border()
+
+	def _itemAt(self, cx, cy) -> int:
+		"""Index of the item at screen cell (cx, cy), -1 if none.
+		cx=None matches any column (tkinter '@y' form on one column)."""
+		px, py, _, _ = self._screenRect()
+		bd        = self._border()
+		cells, cw = self._layout()
+		for i, (x, row, c) in enumerate(cells):
+			if row != cy - py - bd:
+				continue
+			if cx is None or x <= cx - px - bd < x + cw[c]:
+				return i
+		return -1
 
 	def _screenRect(self):
 		"""Return (x, y, w, h) where the menu is drawn (clamped to screen)."""
@@ -370,11 +413,13 @@ class Menu(Widget):
 				return int(idx)
 			if idx.startswith('@'):
 				try:
-					y = int(idx[1:])
+					xy = [int(float(v)) for v in idx[1:].split(',')]
 				except ValueError:
 					return -1
-				_, py, _, _ = self._screenRect()
-				return _cellY(y) - py - self._border()
+				px, py, _, _ = self._screenRect()
+				if len(xy) == 1:
+					return self._itemAt(None, py + _cellY(xy[0]))
+				return self._itemAt(px + _cellX(xy[0]), py + _cellY(xy[1]))
 			for i, item in enumerate(self._menuItems):
 				if item.get('label') == idx:
 					return i
@@ -411,6 +456,22 @@ class Menu(Widget):
 				return i
 		return current
 
+	def _stepColumn(self, current: int, delta: int) -> int:
+		"""Selectable item of the next column (delta=±1) nearest to the row
+		of *current*; -1 when there is no such column."""
+		cells, cw = self._layout()
+		if not (0 <= current < len(cells)):
+			return -1
+		_, row, c = cells[current]
+		c += delta
+		while 0 <= c < len(cw):
+			best = [i for i, (_, _, ci) in enumerate(cells)
+				if ci == c and self._selectable(i)]
+			if best:
+				return min(best, key=lambda i: (abs(cells[i][1]-row), cells[i][1]))
+			c += delta
+		return -1
+
 	def _nextSelectable(self, current: int) -> int:
 		return self._step(current, +1)
 
@@ -444,9 +505,9 @@ class Menu(Widget):
 			return
 
 		px, py, mw, mh = self._screenRect()
-		bd     = self._border()
-		innerW = max(1, mw - 2*bd)
-		attr   = self._getAttr()
+		bd        = self._border()
+		attr      = self._getAttr()
+		cells, cw = self._layout()
 
 		_fillRect(scr, py, px, mh, mw, attr=attr)
 		if bd > 0:
@@ -457,9 +518,11 @@ class Menu(Widget):
 		actA = self._focusAttr()
 
 		for i, item in enumerate(self._menuItems):
-			iy    = py + bd + i
-			ix    = px + bd
-			itype = item['type']
+			x, row, c = cells[i]
+			iy     = py + bd + row
+			ix     = px + bd + x
+			innerW = cw[c]
+			itype  = item['type']
 
 			if itype == 'separator':
 				_addStr(scr, iy, ix, '─' * innerW, attr)
@@ -520,11 +583,15 @@ class Menu(Widget):
 			if self._selectable(self._active) and \
 					self._menuItems[self._active]['type'] == 'cascade':
 				self._openCascade(self._active)
+			elif (i := self._stepColumn(self._active, +1)) >= 0:
+				self._active = i
 			elif self._inMenuBarChain() and app is not None:
 				app._menuBarStep(+1)
 		elif key == KEY_LEFT:
 			parent = self._parentMenu
-			if parent is not None and parent._posted:
+			if (i := self._stepColumn(self._active, -1)) >= 0:
+				self._active = i
+			elif parent is not None and parent._posted:
 				self.unpost()
 			elif self._fromMenuBar and app is not None:
 				app._menuBarStep(-1)
@@ -568,16 +635,14 @@ class Menu(Widget):
 	# ------------------------------------------------------------------
 
 	def _handleMouse(self, mx: int, my: int, bstate: int):
-		px, py, mw, _ = self._screenRect()
-		bd  = self._border()
 		wheel = isWheel(bstate)
 		if wheel:
 			self._active = self._step(self._active, wheel)
 			self._markDirty()
 			return True
 
-		row = my - py - bd
-		if not (0 <= row < len(self._menuItems)) or not (px + bd <= mx < px + mw - bd):
+		row = self._itemAt(mx, my)
+		if row < 0:
 			return True
 		if self._selectable(row):
 			self._active = row

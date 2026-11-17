@@ -368,6 +368,37 @@ class MenuTest(unittest.TestCase):
 		press(root, 'o')
 		self.assertEqual(got, ['quit', 'open'])
 
+	def test_columnbreak(self):
+		root, scr = makeApp(60, 12)
+		got = []
+		m = tk.Menu(root)
+		for label in ('AAA', 'BBB', '', 'CCC', 'DDD', 'EEE'):
+			m.add_command(label=label, command=lambda l=label: got.append(l),
+				state='disabled' if label == '' else 'normal')
+		m.entryconfigure(3, columnbreak=1)
+		attach(root)
+		m.post(2, 2)
+		root._redraw()
+		self.assertEqual(m._menuHeight(), 3 + 2)
+		self.assertIn('AAA', scr.row(3))
+		self.assertIn('CCC', scr.row(3))
+		self.assertIn('EEE', scr.row(5))
+		self.assertEqual(m.yposition(3), m.yposition(0))
+		self.assertGreater(m.xposition(3), m.xposition(0))
+		# Right moves to the same row of the next column, Left back
+		press(root, curses.KEY_DOWN, curses.KEY_RIGHT)
+		self.assertEqual(m.index('active'), 4)
+		press(root, curses.KEY_DOWN, curses.KEY_LEFT)
+		self.assertEqual(m.index('active'), 1)	# row 2 is disabled
+		press(root, curses.KEY_RIGHT, curses.KEY_RIGHT, 10)
+		self.assertEqual(got, ['DDD'])
+		# mouse click on the second column
+		m.post(2, 2)
+		x = 2 + 1 + m.xposition(5) + 1
+		click(root, x, 5, 'press')
+		click(root, x, 5, 'release')
+		self.assertEqual(got, ['DDD', 'EEE'])
+
 	def test_click_outside_closes_with_clicked_event(self):
 		root, scr = makeApp(40, 12)
 		m = tk.Menu(root); m.add_command(label='A')
