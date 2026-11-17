@@ -346,8 +346,8 @@ width actually drawn — a widget squeezed below its border drops the border.
   `self._items` — and never call overridable public methods (`xview()`, `yview()`)
   from internal code; use `Text.xview(self, …)` (flair's `xview()` closes its popup).
 
-- `place()` works inside any widget (`Widget._layoutChildren`); leaf widgets'
-  placed children are drawn after the widget (`_renderWithSlaves`), containers set
+- `pack`/`grid`/`place` work inside any widget (`Widget._layoutChildren`, e.g. a Button packed in an Entry); leaf widgets'
+  managed children are drawn after the widget (`_renderWithSlaves`), containers set
   `_rendersChildren = True`.  Tk class bindings of virtual events (Listbox
   `<<PrevLine>>` …) go in `_handleVirtual(sequence)`.  The Text `current` mark is
   moved before the mouse bindings run (`_pointerAt`).

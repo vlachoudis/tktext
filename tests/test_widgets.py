@@ -113,6 +113,22 @@ class EntryTest(unittest.TestCase):
 		e.insert('end', 'q')
 		self.assertEqual(e.get(), 'abc')
 
+	def test_packed_child(self):
+		# a button packed inside an Entry (flair's FileEntry) is laid out,
+		# drawn on the right of the field and receives the clicks
+		root, scr = makeApp(30, 5)
+		hits = []
+		e = tk.Entry(root, width=20); e.pack()
+		b = tk.Button(e, text='...', command=lambda: hits.append(1))
+		b.pack(side=tk.RIGHT)
+		e.pack_propagate(0)
+		attach(root)
+		self.assertTrue(b._isMapped())
+		self.assertEqual(b._x + b._width, e._x + e._width - e._border())
+		self.assertIn('...', scr.row(b._y))
+		click(root, b._x, b._y)
+		self.assertEqual(hits, [1])
+
 	def test_insert_delete_index(self):
 		root, scr = makeApp(30, 5)
 		e = tk.Entry(root)

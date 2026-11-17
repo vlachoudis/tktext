@@ -205,6 +205,17 @@ class PanedWindow(Frame):
 	# Layout
 	# ------------------------------------------------------------------
 
+	@staticmethod
+	def _hidden(child):
+		hide = child._geoInfo.get('hide', False)
+		if isinstance(hide, str):
+			return hide.lower() in ('1', 'true', 'yes', 'on')
+		return bool(hide)
+
+	def _visiblePanes(self):
+		"""Panes shown: like Tk a hidden pane takes no space and no sash"""
+		return [c for c in self._panes if not c._destroyed and not self._hidden(c)]
+
 	def _paneReq(self, child):
 		# like Tk an explicit pane width/height replaces the requested size
 		w, h = child._preferredSize()
@@ -216,10 +227,11 @@ class PanedWindow(Frame):
 		return (w, h) if self._horizontal() else (h, w)
 
 	def _preferredSize(self):
-		if not self._panes:
+		panes = self._visiblePanes()
+		if not panes:
 			return super()._preferredSize()
-		along  = sum(self._paneReq(c)[0] for c in self._panes) + len(self._panes) - 1
-		across = max(self._paneReq(c)[1] for c in self._panes)
+		along  = sum(self._paneReq(c)[0] for c in panes) + len(panes) - 1
+		across = max(self._paneReq(c)[1] for c in panes)
 		bd     = self._cfgBorder()
 		ow     = _int(self._opts.get('width'))
 		oh     = _int(self._opts.get('height'))
@@ -234,7 +246,10 @@ class PanedWindow(Frame):
 
 	def _layoutChildren(self):
 		super()._layoutChildren()
-		panes = [c for c in self._panes if not c._destroyed]
+		for c in self._panes:
+			if not c._destroyed and self._hidden(c):
+				c._unmapTree()
+		panes = self._visiblePanes()
 		inner = self._innerGeom()
 		horiz = self._horizontal()
 		total = inner._width if horiz else inner._height

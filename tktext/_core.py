@@ -2164,17 +2164,27 @@ class Widget:
 		return self
 
 	def _layoutChildren(self):
-		"""Tk allows place() inside any widget (e.g. a popup list placed
-		over a Text).  Containers override this; for the other widgets
-		lay out the placed children inside the border."""
-		placed = [(c, c._geoInfo) for c in self._children if c._geoManager == 'place']
-		if not placed:
+		"""Tk allows any geometry manager inside any widget (e.g. a popup
+		list placed over a Text, a button packed inside an Entry).
+		Containers override this; for the other widgets lay out the
+		managed children inside the border."""
+		packed  = []
+		gridded = []
+		placed  = []
+		for c in self._children:
+			if   c._geoManager == 'pack':  packed.append((c, c._geoInfo))
+			elif c._geoManager == 'grid':  gridded.append((c, c._geoInfo))
+			elif c._geoManager == 'place': placed.append((c, c._geoInfo))
+		if not packed and not gridded and not placed:
 			return
-		from ._layout import doPlaceLayout
+		from ._layout import doPackLayout, doGridLayout, doPlaceLayout
 		from ._frame import _InnerGeom
-		bd = self._border()
-		doPlaceLayout(_InnerGeom(self._x + bd, self._y + bd,
-			max(0, self._width - 2*bd), max(0, self._height - 2*bd)), placed)
+		bd    = self._border()
+		inner = _InnerGeom(self._x + bd, self._y + bd,
+			max(0, self._width - 2*bd), max(0, self._height - 2*bd))
+		if packed:  doPackLayout(inner, packed)
+		if gridded: doGridLayout(inner, gridded, {}, {})
+		if placed:  doPlaceLayout(inner, placed)
 
 	def _preRender(self):
 		"""Called after layout, before drawing: clamp scroll offsets,
