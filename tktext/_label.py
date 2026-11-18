@@ -89,10 +89,11 @@ class Label(Widget):
 			_drawBorder(scr, self._y, self._x, self._height, self._width, relief,
 				self._borderAttr(attr))
 
+		innerH = self._height - 2*bd - 2*pady
 		_drawText(scr,
 			self._x + bd + padx, self._y + bd + pady,
-			self._width - 2*bd - 2*padx, self._height - 2*bd - 2*pady,
-			self._wrappedText(),
+			self._width - 2*bd - 2*padx, innerH,
+			self._spreadCompound(self._wrappedText(), innerH),
 			self._opts.get('anchor') or 'center',
 			self._opts.get('justify') or 'center',
 			attr)

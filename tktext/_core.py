@@ -1822,10 +1822,14 @@ class Widget:
 		comp  = str(self._opts.get('compound') or 'none')
 		glyph = self._compoundGlyph()
 		if glyph:
-			if comp in ('left', 'top'):
+			if comp == 'left':
 				return f'{glyph} {text}'
-			if comp in ('right', 'bottom'):
+			if comp == 'right':
 				return f'{text} {glyph}'
+			if comp == 'top':
+				return f'{glyph}\n{text}'
+			if comp == 'bottom':
+				return f'{text}\n{glyph}'
 		if PX == 1:
 			return text
 		if comp == 'left':
@@ -1833,6 +1837,19 @@ class Widget:
 		if comp == 'right':
 			return text + ' '
 		return ' ' + text + ' '
+
+	def _spreadCompound(self, text: str, h: int) -> str:
+		"""In a cell area taller than a top/bottom compound text: the glyph goes
+		to the top (bottom) row and the text to the opposite edge"""
+		comp  = str(self._opts.get('compound') or 'none')
+		if comp not in ('top', 'bottom') or not self._opts.get('image'):
+			return text
+		lines = text.split('\n')
+		gap   = h - len(lines)
+		if gap <= 0 or len(lines) < 2:
+			return text
+		i = 1 if comp == 'top' else len(lines) - 1
+		return '\n'.join(lines[:i] + [''] * gap + lines[i:])
 
 	def _iconBox(self, glyph: str) -> str:
 		"""A small icon is its glyph, padded to two cells; a large one (> 24 px high in

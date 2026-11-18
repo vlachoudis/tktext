@@ -125,10 +125,14 @@ class Button(Widget):
 			return icon if '\n' in icon else f'[{icon}]'
 		glyph = self._compoundGlyph() if self._opts.get('image') else ''
 		comp  = str(self._opts.get('compound') or 'none')
-		if glyph and comp in ('left', 'top'):
+		if glyph and comp == 'left':
 			return f'[{glyph} {text}]'
-		if glyph and comp in ('right', 'bottom'):
+		if glyph and comp == 'right':
 			return f'[{text} {glyph}]'
+		if glyph and comp == 'top':
+			return f'{glyph}\n[{text}]'
+		if glyph and comp == 'bottom':
+			return f'[{text}]\n{glyph}'
 		return f'[{text}]'
 
 	def _plainText(self) -> str:
@@ -190,7 +194,7 @@ class Button(Widget):
 		_drawText(scr,
 			self._x + bd + padx, self._y + bd + pady,
 			innerW - 2*padx, innerH - 2*pady,
-			self._getText(),
+			self._spreadCompound(self._getText(), innerH - 2*pady),
 			self._opts.get('anchor') or 'center',
 			self._opts.get('justify') or 'center',
 			attr)
