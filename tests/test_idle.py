@@ -34,9 +34,32 @@ class RedirectorTest(unittest.TestCase):
 
 	def test_typing_goes_through_the_command(self):
 		press(self.root, 'ab', 10)
-		self.assertEqual(self.text.get('1.0', 'end-1c'), 'ab\n')
 		self.assertEqual([s[0] for s in self.seen], ['insert'] * 3)
 		self.assertEqual(self.seen[0], ('insert', 'insert', 'a'))
+		self.assertEqual(self.text.get('1.0', 'end-1c'), 'ab\n')
+
+	def test_queries_go_through_the_command(self):
+		# like tkinter: idlelib's dispatch returns "" on a TclError, so
+		# search.find() works without a selection
+		t = self.text
+		t.tk.deletecommand(t._w)
+
+		def dispatch(op, *args):
+			self.seen.append((op,) + args)
+			try:
+				return t.tk.call((t._w + '_orig', op) + args)
+			except tk.TclError:
+				return ''
+
+		t.tk.createcommand(t._w, dispatch)
+		t.insert('1.0', 'hello')
+		self.seen.clear()
+		self.assertEqual(t.get('sel.first', 'sel.last'), '')
+		self.assertEqual(t.index('sel.first'), '')
+		self.assertEqual(t.get('1.0', '1.2'), 'he')
+		self.assertTrue(t.compare('1.0', '<', '1.2'))
+		self.assertEqual([s[0] for s in self.seen],
+			['get', 'index', 'get', 'compare'])
 
 	def test_backspace_and_selection_go_through_the_command(self):
 		press(self.root, 'abc')

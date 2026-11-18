@@ -13,6 +13,8 @@
 import re
 import bisect
 import curses
+import functools
+import inspect
 
 from ._core import TclError, Widget, _addStr, _fillRect, _drawBorder, _int, \
 	_newMouseEvent, _mouseEventNames, _cellX, _cellY, _pxBox
@@ -78,6 +80,22 @@ def _segRow(seg):
 
 def _isWordChar(ch) -> bool:
 	return ch.isalnum() or ch == '_'
+
+def _viaCommand(func):
+	"""tkinter sends every Text method through the widget command, so a
+	redirected Text (idlelib WidgetRedirector, which returns "" on a
+	TclError) sees the call first; the original command runs func"""
+	name = func.__name__
+	sig  = inspect.signature(func)
+
+	@functools.wraps(func)
+	def wrapper(self, *args, **kw):
+		if self.tk._redirected(self):
+			if kw:
+				args = sig.bind(self, *args, **kw).args[1:]
+			return self.tk.call(self._w, name, *args)
+		return func(self, *args, **kw)
+	return wrapper
 from ._core import _initArgs
 
 
@@ -613,6 +631,7 @@ class Text(_ScrollMixin, Widget):
 		self.delete(index1, index2)
 		self.insert(a, chars, *tags)
 
+	@_viaCommand
 	def get(self, index1, index2=None):
 		"""Return text between *index1* and *index2*."""
 		a = self._parseIndex(index1)
@@ -695,10 +714,12 @@ class Text(_ScrollMixin, Widget):
 			return None
 		return result
 
+	@_viaCommand
 	def index(self, index) -> str:
 		"""Return the normalised "line.col" form of *index*."""
 		return self._toTkIndex(self._parseIndex(index))
 
+	@_viaCommand
 	def compare(self, index1, op, index2) -> bool:
 		a = self._parseIndex(index1)
 		b = self._parseIndex(index2)
@@ -761,12 +782,14 @@ class Text(_ScrollMixin, Widget):
 			count.set(m.end() - m.start())
 		return self._toTkIndex(self._fromOffset(m.start()))
 
+	@_viaCommand
 	def see(self, index):
 		"""Scroll so that *index* is visible."""
 		pos = self._clampPos(self._parseIndex(index), allowEnd=False)
 		self._scrollToPos(pos)
 		self._markDirty()
 
+	@_viaCommand
 	def bbox(self, index):
 		pos = self._clampPos(self._parseIndex(index), allowEnd=False)
 		sp  = self._screenPos(pos)
@@ -775,6 +798,7 @@ class Text(_ScrollMixin, Widget):
 		y, x = sp
 		return _pxBox((x - self._x, y - self._y, 1, 1))
 
+	@_viaCommand
 	def dlineinfo(self, index):
 		"""(x, y, width, height, baseline) of the display line of *index*."""
 		pos = self._parseIndex(index)

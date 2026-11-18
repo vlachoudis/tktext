@@ -106,6 +106,7 @@ class TclShim:
 		self._vars	= dict(_TCL_GLOBALS)
 		self._renamed	= {}		# 'rename'd widget command -> widget
 		self._hidden	= set()		# widget paths renamed away
+		self._original	= []		# widgets running their original command
 
 	# ------------------------------------------------------------------
 	# Conversion helpers (tkapp API)
@@ -145,7 +146,9 @@ class TclShim:
 		return True
 
 	def interpaddr(self):
-		return 0
+		"""There is no Tcl interpreter: C extensions using the address
+		(Tk_MainWindow, Tcl_GetStringResult, …) would crash the process"""
+		raise TclError('tktext has no Tcl interpreter address')
 
 	def willdispatch(self):
 		pass
@@ -228,7 +231,10 @@ class TclShim:
 
 	def _redirected(self, widget) -> bool:
 		"""True if the command of widget was replaced by a Python one
-		(rename + createcommand), so its edits must go through tk.call"""
+		(rename + createcommand), so its edits must go through tk.call;
+		False while its original command runs"""
+		if any(w is widget for w in self._original):
+			return False
 		return str(widget) in self._commands
 
 	def _rename(self, old, new):
@@ -280,7 +286,11 @@ class TclShim:
 		if classMethods:
 			func = getattr(type(widget), sub, None)
 			if callable(func):
-				return func(widget, *rest)
+				self._original.append(widget)
+				try:
+					return func(widget, *rest)
+				finally:
+					self._original.pop()
 		else:
 			func = getattr(widget, sub, None)
 			if callable(func):

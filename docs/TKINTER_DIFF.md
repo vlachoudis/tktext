@@ -141,7 +141,7 @@ Remaining differences:
 |---|---|
 | `simpledialog._setup_dialog`, `_place_window` | **done** |
 | `widget._windowingsystem` | **done** (`'x11'`) |
-| Tcl `rename` of a widget command + `createcommand` (`WidgetRedirector`) | **done**: the renamed command calls the class methods; a redirected Text sends its keyboard edits, Cut and Paste through the command like Tk's class bindings |
+| Tcl `rename` of a widget command + `createcommand` (`WidgetRedirector`) | **done**: the renamed command calls the class methods; a redirected Text sends its keyboard edits, Cut and Paste through the command like Tk's class bindings, and `get`, `index`, `compare`, `see`, `bbox`, `dlineinfo` like tkinter (so idlelib's dispatch turns their TclError into `""`) |
 | Tcl `set`, `tcl_wordBreakAfter`, `tcl_wordBreakBefore` | **done** |
 | `None` arguments of `tk.call`, `Text.tag_add`, `Text.insert` tags | **done**: dropped like `_tkinter` |
 | `bind(seq)` / `bind_class(cls, seq)` query | **done**: a string (one line per callback) like Tk's script; a Tcl script as callback is ignored |
@@ -157,6 +157,8 @@ Remaining differences:
 - One class serves both classic and ttk widgets (`tk.Button is ttk.Button`), so the
   accepted options are the union of both sets.
 - `Menubutton` shows `▼` by default (`indicatoron=1`), Tk's classic default is 0.
+- `tk.interpaddr()` raises `TclError`: there is no Tcl interpreter, and C extensions
+  that take its address (geoviewer, tkXcursor, cairo) would crash the process.
 - X11-only features (visuals, colormaps, `send`, `wm_manage`, embedding with `use`)
   are accepted and ignored.
 - Extension: `widget.rasterImage(data, width, height)` / `widget.rasterSize()` show
