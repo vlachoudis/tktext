@@ -108,7 +108,7 @@ class ToplevelTest(unittest.TestCase):
 		tk.Label(pop, text='popup').pack()
 		attach(root)
 		self.assertEqual((main._x, main._y, main._width, main._height), (0, 0, 60, 20))
-		self.assertEqual(scr.row(0).strip(), 'Main')		# title bar
+		self.assertEqual(scr.row(0).split(), ['Main', '✕'])	# title bar + close
 		self.assertIsNotNone(scr.find('Dialog'))		# dialog frame title
 		self.assertEqual((pop._x, pop._y), (3, 4))
 		self.assertEqual(scr.find('popup'), (4, 3))

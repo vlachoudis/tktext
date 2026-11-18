@@ -98,7 +98,8 @@ class Image:
 		return self.name
 
 	def __del__(self):
-		if _images.get(getattr(self, 'name', None)) is self:
+		# at interpreter exit the module globals may already be None
+		if _images is not None and _images.get(getattr(self, 'name', None)) is self:
 			del _images[self.name]
 
 	def __setattr__(self, key, value):

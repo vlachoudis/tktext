@@ -157,3 +157,14 @@ def askinteger(title, prompt, **kw):
 
 def askfloat(title, prompt, **kw):
 	return _ask(title, prompt, float, **kw)
+
+
+# tkinter's private helpers, imported by applications (e.g. idlelib)
+def _setup_dialog(w) -> None:
+	"""A terminal has no window manager types: nothing to set"""
+	return None
+
+
+def _place_window(w, parent=None) -> None:
+	"""Centre w on parent (or the screen) like ::tk::PlaceWindow"""
+	w.tk.call('::tk::PlaceWindow', w, 'widget', parent)

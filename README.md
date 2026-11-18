@@ -152,6 +152,7 @@ python3 flair.py --text project.flair     # or FLAIR_TK=text
 | `F10` | open the menubar |
 | `Esc` | close the open menu / drop-down |
 | `Ctrl-C` | dismiss a dialog, otherwise close the active window |
+| `Alt-F4`, click `✕` | close the window (the title bar's close button) |
 | `Ctrl-Z` | suspend the program |
 
 The mouse works as in Tk: click, double click, drag selection, wheel

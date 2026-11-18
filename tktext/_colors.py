@@ -222,8 +222,10 @@ _DEFAULT_THEME = {
 	'focus':		('', '', 'reverse'),		# focused button, menu entry
 	'pressed':		('', '', 'reverse bold'),	# button flashed on click
 	'titlebar':		('black', 'white', ''),		# row 0: menubar
-	'titlebar.title':	('black', 'white', 'bold'),	# row 0: window title
+	'titlebar.title':	('white', 'black', 'bold'),	# row 0: window title (reversed)
 	'titlebar.disabled':	('gray', 'white', ''),		# disabled menubar entry
+	'titlebar.close':	('black', 'white', 'bold'),	# close button ✕ of a window
+	'titlebar.button':	('black', 'white', 'bold'),	# window switch buttons ◀ ▶ ▾
 	'menubar.active':	('white', 'black', 'bold'),	# open menubar entry
 	'frame.active':		('cyan', '', 'bold'),		# border of the active dialog window
 	'border':		('#808080', '', ''),		# widget borders, LabelFrame lines

@@ -19,7 +19,23 @@ look-and-feel commands are accepted and ignored; anything else raises
 TclError so that callers wrapped in ``try/except TclError`` keep working.
 """
 
+import re
+
 from ._core import TclError
+
+
+# global variables every Tcl/Tk interpreter defines (values of Tk 8.6.18)
+_TCL_GLOBALS = {
+	'tcl_version':		'8.6',
+	'tcl_patchLevel':	'8.6.18',
+	'tk_version':		'8.6',
+	'tk_patchLevel':	'8.6.18',
+	'tcl_interactive':	'0',
+	'tcl_precision':	0,
+	'tk_strictMotif':	0,
+	'tcl_library':		'',
+	'tk_library':		'',
+}
 
 
 def _nameToWidget(path, root=None):
@@ -87,7 +103,9 @@ class TclShim:
 	def __init__(self, root=None):
 		self._root	= root		# the Tk application (one interpreter each)
 		self._commands	= {}
-		self._vars	= {}
+		self._vars	= dict(_TCL_GLOBALS)
+		self._renamed	= {}		# 'rename'd widget command -> widget
+		self._hidden	= set()		# widget paths renamed away
 
 	# ------------------------------------------------------------------
 	# Conversion helpers (tkapp API)
@@ -186,12 +204,19 @@ class TclShim:
 	def call(self, *args):
 		if len(args) == 1 and isinstance(args[0], (tuple, list)):
 			args = tuple(args[0])
+		args = tuple(a for a in args if a is not None)	# as _tkinter does
 		if not args:
 			return ''
 		cmd  = str(args[0])
 		rest = args[1:]
 		if cmd in self._commands:
 			return self._commands[cmd](*rest)
+		if cmd in self._renamed:
+			# the original widget command: the class methods, not the
+			# instance attributes that mask them (idlelib WidgetRedirector)
+			return self._widgetCommand(self._renamed[cmd], rest, True)
+		if cmd in self._hidden:
+			raise TclError(f'invalid command name "{cmd}"')
 		if cmd.startswith('.') or not isinstance(args[0], str):
 			return self._widgetCommand(self._widget(args[0]), rest)
 		handler = _COMMANDS.get(cmd.lstrip(':'))
@@ -201,7 +226,37 @@ class TclShim:
 
 	# ------------------------------------------------------------------
 
-	def _widgetCommand(self, widget, args):
+	def _redirected(self, widget) -> bool:
+		"""True if the command of widget was replaced by a Python one
+		(rename + createcommand), so its edits must go through tk.call"""
+		return str(widget) in self._commands
+
+	def _rename(self, old, new):
+		"""rename oldName newName: a widget command or a created command;
+		an empty newName deletes the command"""
+		old = str(old)
+		new = str(new)
+		if new and (new in self._commands or new in self._renamed):
+			raise TclError(f'can\'t rename to "{new}": command already exists')
+		if old in self._commands:
+			func = self._commands.pop(old)
+			if new:
+				self._commands[new] = func
+			return ''
+		if old in self._renamed:
+			widget = self._renamed.pop(old)
+		elif old not in self._hidden:
+			widget = self._widget(old)
+			self._hidden.add(old)
+		else:
+			raise TclError(f'can\'t rename "{old}": command doesn\'t exist')
+		if new == str(widget):
+			self._hidden.discard(new)
+		elif new:
+			self._renamed[new] = widget
+		return ''
+
+	def _widgetCommand(self, widget, args, classMethods=False):
 		if not args:
 			raise TclError('wrong # args')
 		sub  = str(args[0])
@@ -222,9 +277,14 @@ class TclShim:
 				return widget.configure(**_optionPairs(rest))
 		elif sub == 'cget' and rest:
 			return widget.cget(str(rest[0]).lstrip('-'))
-		func = getattr(widget, sub, None)
-		if callable(func):
-			return func(*rest)
+		if classMethods:
+			func = getattr(type(widget), sub, None)
+			if callable(func):
+				return func(widget, *rest)
+		else:
+			func = getattr(widget, sub, None)
+			if callable(func):
+				return func(*rest)
 		raise TclError(f'bad option "{sub}"')
 
 
@@ -369,6 +429,46 @@ def _textAnchor(tcl, widget):
 	return ANCHOR_MARK
 
 
+def _setCommand(tcl, *args):
+	"""set varName ?value?"""
+	if len(args) == 2:
+		tcl.setvar(str(args[0]), args[1])
+		return args[1]
+	if len(args) == 1:
+		return tcl.getvar(str(args[0]))
+	raise TclError('wrong # args: should be "set varName ?newValue?"')
+
+
+def _wordRe(tcl) -> re.Pattern:
+	"""Pattern of a word character from tcl_wordchars (default \\w)"""
+	try:
+		chars = str(tcl.getvar('tcl_wordchars'))
+	except TclError:
+		chars = r'\w'
+	return re.compile(chars)
+
+
+def _wordBreakAfter(tcl, text, start):
+	"""tcl_wordBreakAfter str start: first word/non-word boundary after start"""
+	text  = str(text)
+	isWord = _wordRe(tcl)
+	start = int(start)
+	for i in range(max(start, 0) + 1, len(text)):
+		if bool(isWord.match(text[i-1])) != bool(isWord.match(text[i])):
+			return i
+	return -1
+
+
+def _wordBreakBefore(tcl, text, start):
+	"""tcl_wordBreakBefore str start: last word/non-word boundary before start"""
+	text  = str(text)
+	isWord = _wordRe(tcl)
+	for i in range(min(int(start), len(text) - 1), 0, -1):
+		if bool(isWord.match(text[i-1])) != bool(isWord.match(text[i])):
+			return i
+	return -1
+
+
 def _ignore(tcl, *args):
 	return ''
 
@@ -397,6 +497,10 @@ _COMMANDS = {
 	'ttk::treeview::Release':	_ignore,
 	'grid':			_ignore,
 	'update':		_ignore,
+	'set':			_setCommand,
+	'rename':		lambda tcl, old, new: tcl._rename(old, new),
+	'tcl_wordBreakAfter':	_wordBreakAfter,
+	'tcl_wordBreakBefore':	_wordBreakBefore,
 	'source':		_unsupported('source'),
 }
 

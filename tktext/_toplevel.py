@@ -29,6 +29,7 @@ clamped to the terminal; sizes larger than the terminal are ignored.
 
 import re
 
+import curses
 from ._core import _drawBorder, _fillRect, _addStr, _initArgs
 from ._frame import Frame
 
@@ -48,6 +49,17 @@ def _parseGeometry(spec):
 		x = int(x) if sx == '+' else -int(x) - 1
 		y = int(y) if sy == '+' else -int(y) - 1
 	return (w, h, x, y)
+
+
+# close button of a window (the window manager's): on the right of the title
+# bar of a maximised window, in the top-right corner of a framed one
+CLOSE_LABEL	= ' ✕ '
+CLOSE_WIDTH	= len(CLOSE_LABEL)
+
+# window switch buttons left of the close button of a maximised window:
+# previous, next, list of the windows
+SWITCH_LABELS	= (' ◀ ', ' ▶ ', ' ▾ ')
+SWITCH_WIDTH	= sum(len(x) for x in SWITCH_LABELS)
 
 
 class Wm:
@@ -232,7 +244,7 @@ class Toplevel(Wm, Frame):
 		self._opts['takefocus'] = False
 		app = self._getApp()
 		if app is not None:
-			app._toplevels.append(self)
+			app._stack.append(self)
 			self._title = app._title
 		if kwargs:
 			Toplevel.configure(self, **kwargs)
@@ -260,8 +272,8 @@ class Toplevel(Wm, Frame):
 		app = self._getApp()
 		super().destroy()
 		if app is not None:
-			if self in app._toplevels:
-				app._toplevels.remove(self)
+			if self in app._stack:
+				app._stack.remove(self)
 			if app._grab is not None and (app._grab is self or
 					self._isAncestorOf(app._grab)):
 				app._grab = None
@@ -276,9 +288,9 @@ class Toplevel(Wm, Frame):
 
 	def lower(self, belowThis=None):
 		app = self._getApp()
-		if app is not None and self in app._toplevels:
-			app._toplevels.remove(self)
-			app._toplevels.insert(0, self)
+		if app is not None and self in app._stack:
+			app._stack.remove(self)
+			app._stack.insert(0, self)
 			app._dirty = True
 
 	wm_lower = lower
@@ -340,6 +352,10 @@ class Toplevel(Wm, Frame):
 					top._y + (top._height - h) // 2)
 		return ((screenW - w) // 2, (screenH - h) // 2)
 
+	def _closeCell(self):
+		"""(x, y) of the ✕ of a framed window"""
+		return (self._x + self._width - 3, self._y)
+
 	def _innerGeom(self):
 		from ._frame import _InnerGeom
 		top, side = self._decoration()
@@ -380,7 +396,10 @@ class Toplevel(Wm, Frame):
 			if self._width > 4:
 				title = title[:self._width - 4]
 				_addStr(scr, self._y, self._x + (self._width - len(title)) // 2,
-					title, battr)
+					title, battr | curses.A_REVERSE)
+			if self._width >= len(title) + 2 * CLOSE_WIDTH + 2:
+				y, x = self._closeCell()[::-1]
+				_addStr(scr, y, x - 1, CLOSE_LABEL, battr)
 		bd = self._border()
 		relief = self._opts.get('relief', 'flat')
 		if bd > 0 and relief != 'flat':

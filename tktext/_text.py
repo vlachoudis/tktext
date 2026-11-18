@@ -264,7 +264,12 @@ class Text(_ScrollMixin, Widget):
 				   (sub == 'display' and unit.startswith('l')):
 					pos = self._moveDisplayLines(pos, n)
 				elif unit.startswith('l'):
-					r = max(0, min(pos[0] + n, len(self._buf) - 1))
+					# like Tk, past the last line is the end index
+					if pos[0] + n >= len(self._buf):
+						pos  = self._endPos()
+						rest = rest[m.end():]
+						continue
+					r = max(0, pos[0] + n)
 					c = pos[1] if pos[0] < len(self._buf) else 0
 					pos = (r, min(c, len(self._buf[r])))
 				else:		# chars / indices / display chars
@@ -569,7 +574,9 @@ class Text(_ScrollMixin, Widget):
 			r, c = pos
 			for i, text in enumerate(texts):
 				tagls = args[2*i + 1] if 2*i + 1 < len(args) else ()
-				if isinstance(tagls, str):
+				if tagls is None:
+					tagls = ()		# idlelib passes tags=None
+				elif isinstance(tagls, str):
 					tagls = tagls.split()
 				n = text.count('\n')
 				if n:
@@ -770,7 +777,10 @@ class Text(_ScrollMixin, Widget):
 
 	def dlineinfo(self, index):
 		"""(x, y, width, height, baseline) of the display line of *index*."""
-		pos = self._clampPos(self._parseIndex(index), allowEnd=False)
+		pos = self._parseIndex(index)
+		if pos >= self._endPos():
+			return None		# like Tk: the end index has no display line
+		pos = self._clampPos(pos, allowEnd=False)
 		sp  = self._screenPos(pos)
 		if sp is None:
 			return None
@@ -926,7 +936,8 @@ class Text(_ScrollMixin, Widget):
 
 	def tagAdd(self, tagName, index1, *more):
 		"""Apply tag *tagName* to [index1, index2) (more pairs may follow)."""
-		args = [index1] + list(more)
+		# like _tkinter, None arguments are dropped (idlelib passes index2=None)
+		args = [a for a in (index1,) + more if a is not None]
 		for i in range(0, len(args), 2):
 			a = self._parseIndex(args[i])
 			if i + 1 < len(args):
@@ -2093,6 +2104,11 @@ class Text(_ScrollMixin, Widget):
 				key in _SHIFT_MAP or key in (_CTRL_A, _CTRL_E)):
 			return False		# like Tk: a disabled text still scrolls
 
+		if state != 'disabled' and self.tk._redirected(self):
+			done = self._commandEdit(key)
+			if done is not None:
+				return done
+
 		r, c = self._cur
 
 		if key == _CTRL_A:
@@ -2203,6 +2219,45 @@ class Text(_ScrollMixin, Widget):
 		self._markDirty()
 		return True
 
+	def _commandEdit(self, key):
+		"""Editing keys of a Text whose widget command was replaced
+		(idlelib Percolator): like Tk's class bindings, edit through the
+		command, so that the replacement sees every insert and delete.
+		Return None for the keys that do not edit."""
+		cmd = lambda *args: self.tk.call(self._w, *args)
+		sel = self._sel is not None
+		if key == KEY_BACKSPACE:
+			if sel:
+				cmd('delete', 'sel.first', 'sel.last')
+			elif self._cur > (0, 0):
+				cmd('delete', 'insert-1c')
+		elif key == KEY_DC:
+			if sel:
+				cmd('delete', 'sel.first', 'sel.last')
+			else:
+				cmd('delete', 'insert')
+		elif key == _CTRL_K:
+			if self._cur[1] < len(self._buf[self._cur[0]]):
+				cmd('delete', 'insert', 'insert lineend')
+			else:
+				cmd('delete', 'insert')
+		elif key == KEY_ENTER or isPrintableKey(key):
+			if sel:
+				cmd('delete', 'sel.first', 'sel.last')
+			cmd('insert', 'insert', '\n' if key == KEY_ENTER else chr(key))
+		else:
+			return None
+		self._wantCol = None
+		self._scrollToCursor()
+		self._markDirty()
+		return True
+
+	def _commandPaste(self, text) -> None:
+		"""<<Paste>> through a replaced widget command (see _commandEdit)"""
+		if self._sel is not None:
+			self.tk.call(self._w, 'delete', 'sel.first', 'sel.last')
+		self.tk.call(self._w, 'insert', 'insert', text)
+
 	def _deleteSelection(self):
 		"""Delete selected text.  Return True if a selection existed."""
 		s = self._sel
@@ -2248,7 +2303,10 @@ class Text(_ScrollMixin, Widget):
 			self.clipboard_clear()
 			self.clipboard_append(text)
 			if sequence == '<<Cut>>' and editable:
-				self._deleteSelection()
+				if self.tk._redirected(self):
+					self.tk.call(self._w, 'delete', 'sel.first', 'sel.last')
+				else:
+					self._deleteSelection()
 				self._scrollToCursor()
 		elif sequence == '<<Paste>>':
 			if not editable:
@@ -2257,6 +2315,10 @@ class Text(_ScrollMixin, Widget):
 				text = self.clipboard_get()
 			except TclError:
 				return False
+			if self.tk._redirected(self):
+				self._commandPaste(text)
+				self._scrollToCursor()
+				return True
 			self._deleteSelection()
 			self._beginEdit()
 			self._cur       = self._rawInsert(self._cur, text)

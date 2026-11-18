@@ -193,8 +193,11 @@ themselves) and keeps a shadow of what the terminal shows (`invalidate()` on res
 Toplevels: a normal Toplevel is maximised (own title bar/menubar on row 0), a transient
 one is a framed dialog centred on its master, an override-redirect one is placed exactly.
 The keyboard always belongs to the topmost decorated window (`Tk._activeWindow()`);
-`grab_set()` confines mouse and keys; transients stay above their master.  Modal loops
-(`wait_window`, `wait_variable`) may run before `mainloop()`: the screen is started lazily
+`grab_set()` confines mouse and keys; transients stay above their master.
+`Tk._stack` is the stacking order bottom→top **with the root** (`_toplevels` is derived);
+the title bar `◀ ▶ ▾` / Ctrl-F6 switch rotates the maximised windows (`Tk._cycleWindow`,
+`_selectWindow`, `_postWindowList`: an internal Menu kept out of `root._children`).
+Modal loops (`wait_window`, `wait_variable`) may run before `mainloop()`: the screen is started lazily
 (`Tk._startScreen`, restored by `_stopScreen`, atexit and the excepthook).
 
 ## Colours and Theme
@@ -207,7 +210,7 @@ the option database (`option_add('*selectBackground', …)`, `'*Listbox.selectBa
 `bold reverse underline dim blink`.  API: `tktext.setTheme({'dialog.title': (…)})`
 or `setTheme(disabled=('red', ''))`, `getTheme(role)`, `resetTheme()`,
 `install(theme={…})`.  Roles: `tk.window`, `tk.field` (pixel-mode class defaults),
-`disabled`, `select`, `focus`, `pressed`, `titlebar`, `titlebar.title`, `titlebar.disabled`,
+`disabled`, `select`, `focus`, `pressed`, `titlebar`, `titlebar.title`, `titlebar.disabled`, `titlebar.button`,
 `menubar.active`, `frame.active`, `border` (widget borders in the normal state, `Widget._borderAttr(attr)`), `dialog`, `dialog.title`, `dialog.field`,
 `dialog.select`, `dialog.focus`, `dialog.dir`, `dialog.error`, `scrollbar.trough`,
 `scrollbar.slider`, `entry` (default field colours of Entry/Spinbox/Combobox and of Label/Entry

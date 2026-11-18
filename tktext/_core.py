@@ -674,7 +674,12 @@ class Widget:
 		if sequence is None:
 			return list(self._bindings.keys())
 		if func is None:
-			return [f for _, f in self._bindings.get(sequence, [])]
+			# tkinter returns the Tcl script of the binding: one line per callback
+			return '\n'.join(i for i, _ in self._bindings.get(sequence, []))
+		if isinstance(func, str):
+			# a Tcl script (e.g. idlelib's 'catch {%W delete sel.first sel.last}')
+			# cannot run without Tcl: keep the existing bindings
+			return ''
 		if not add or sequence not in self._bindings:
 			self._bindings[sequence] = []
 		Widget._funcSerial += 1
@@ -1126,6 +1131,10 @@ class Widget:
 	def winfoServer(self):		return 'tktext'
 	def winfoInterps(self, displayof=0): return ('tktext',)
 	def winfoWindowingsystem(self):	return 'x11'
+
+	@property
+	def _windowingsystem(self) -> str:
+		return 'x11'
 
 	# Provide snake_case aliases for compatibility
 	winfo_width		= winfoWidth

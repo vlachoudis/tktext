@@ -194,6 +194,14 @@ A full comparison with tkinter is in `docs/TKINTER_DIFF.md`.
 * An `overrideredirect` Toplevel is placed exactly where its geometry says.
 * `grab_set()` confines keyboard and mouse to the window.
 * The keyboard always goes to the topmost decorated window.
+* With two or more maximised windows (the root included) the title bar shows
+  `◀ ▶ ▾` left of the `✕`: `▶` (Ctrl-F6) sends the front window to the back
+  and shows the next one, `◀` (Ctrl-Shift-F6) brings back the one at the back,
+  `▾` lists all the windows (iconified ones too, deiconified when chosen).
+  A transient dialog moves with its master.  The buttons are hidden when the
+  menubar leaves no room, and do nothing while a grab or a dialog is active.
+* `root.lift()` / `root.lower()` move the root window in the stacking order
+  like the Toplevels.
 
 ### Keys
 
@@ -203,6 +211,10 @@ A full comparison with tkinter is in `docs/TKINTER_DIFF.md`.
 | F10 | Open the menubar (`root.configure(menu=menubar)`) |
 | Escape | Close the open menu / drop-down |
 | Ctrl-C | Dismiss open dialogs, otherwise close the active window (calls its `WM_DELETE_WINDOW` protocol handler; on the root, quits `mainloop`) |
+| Alt-F4 | Close the active window like Ctrl-C, but before the application's bindings (a Text that binds Ctrl-C to Copy cannot take it) |
+| click ✕ | The close button on the right of the title bar (maximised window) or in the top-right corner of a dialog frame: closes that window like Alt-F4; only the grab window while a grab is set |
+| Ctrl-F6 / Ctrl-Shift-F6 | Switch to the next / previous maximised window, before the application's bindings |
+| click ◀ ▶ ▾ | Window switch on the title bar: previous, next, list of the windows |
 | Up / Down on an OptionMenu | Cycle through its values |
 | Left / Right in a multi-column menu | Move to the nearest entry of the previous / next column (Right opens a cascade first) |
 
@@ -338,8 +350,10 @@ is a tuple `(fg, bg, attrs)`:
 | `focus` | focused button, active menu entry | `('', '', 'reverse')` | |
 | `pressed` | button shown pressed for 0.1 s when clicked (Return/space on a focused button shows it unfocused instead) | `('', '', 'reverse bold')` | |
 | `titlebar` | row 0: menubar | `('black', 'white', '')` | |
-| `titlebar.title` | row 0: window title | `('black', 'white', 'bold')` | |
+| `titlebar.title` | row 0: window title (a dialog frame shows its title in the reverse of the frame colours) | `('white', 'black', 'bold')` | |
 | `titlebar.disabled` | disabled menubar entry | `('gray', 'white', '')` | |
+| `titlebar.close` | close button ✕ of a window | `('black', 'white', 'bold')` | |
+| `titlebar.button` | window switch buttons ◀ ▶ ▾ | `('black', 'white', 'bold')` | |
 | `menubar.active` | open menubar entry | `('white', 'black', 'bold')` | |
 | `frame.active` | border of the active dialog window | `('cyan', '', 'bold')` | `('blue', '', 'bold')` |
 | `border` | widget borders and LabelFrame lines (normal state; focused, selected or disabled borders take that state's colours) | `('#808080', '', '')` | `('#a8a8a8', '', '')` |

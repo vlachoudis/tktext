@@ -135,6 +135,23 @@ Remaining differences:
 - `Grid.slaves` is `grid_slaves(row, column)` in tkinter; tktext's mixin aliases are
   `Widget`, whose `slaves` is `pack_slaves` (as on tkinter widgets).
 
+## idlelib (`python3 examples/tkrun.py /usr/lib/python3.14/idlelib/idle.py`)
+
+| Feature | Status |
+|---|---|
+| `simpledialog._setup_dialog`, `_place_window` | **done** |
+| `widget._windowingsystem` | **done** (`'x11'`) |
+| Tcl `rename` of a widget command + `createcommand` (`WidgetRedirector`) | **done**: the renamed command calls the class methods; a redirected Text sends its keyboard edits, Cut and Paste through the command like Tk's class bindings |
+| Tcl `set`, `tcl_wordBreakAfter`, `tcl_wordBreakBefore` | **done** |
+| `None` arguments of `tk.call`, `Text.tag_add`, `Text.insert` tags | **done**: dropped like `_tkinter` |
+| `bind(seq)` / `bind_class(cls, seq)` query | **done**: a string (one line per callback) like Tk's script; a Tcl script as callback is ignored |
+| Text `+Nlines` past the last line, `dlineinfo('end')` | **done**: `end` and `None` like Tk |
+| `<1>`…`<5>` | mouse buttons only (the keys are `<Key-3>`, `'3'`) |
+| Tcl globals `tk_patchLevel`, `tk_version`, `tcl_version`, `tcl_patchLevel`, `tcl_interactive`, `tcl_precision`, `tk_strictMotif`, `tcl_library`, `tk_library` | **done** (Tk 8.6.18 values; the libraries are empty) |
+| `Tk.__getattr__` delegating to the interpreter (`root.globalgetvar(…)`) | **done** |
+| `str(info_patchlevel())` | **done**: `'8.6.18'` |
+| `event.type` | **done**: a `tkinter.EventType` member (`event.type.name`); its values are the type names, so it still compares equal to `'KeyPress'` … |
+
 ## Behavioural notes (by design)
 
 - One class serves both classic and ttk widgets (`tk.Button is ttk.Button`), so the

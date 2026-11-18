@@ -26,14 +26,14 @@ from . import _colors, _termbg
 from ._core import Widget, _fillRect, _addStr, _pad, _mouseEventNames, \
 	_newMouseEvent, _newKeyEvent
 from ._frame import Frame
-from ._toplevel import Wm
+from ._toplevel import Wm, CLOSE_LABEL, CLOSE_WIDTH, SWITCH_LABELS, SWITCH_WIDTH
 from . import _core
 from ._layout import doPackLayout, doGridLayout, doPlaceLayout
 from ._events import KEY_TAB, KEY_BTAB, KEY_ENTER, KEY_CTRL_C, KEY_CTRL_Z, \
 	Event, MOTION, B1_PRESS, B1_RELEASE, B1_CLICK, B1_DCLICK, B3_ANY, isWheel, \
 	B23_PRESS, B23_RELEASE, \
 	decodeEscape, decodeExtended, decodeSgrMouse, isModified, ModKey, \
-	STATE_CONTROL
+	STATE_CONTROL, isAltF4, ctrlF6Step
 
 
 # Written after curses.mousemask(), which enables only the press/release
@@ -79,6 +79,9 @@ class Tk(Wm, Frame):
 		self._dragWidget	= None	# widget that owns the current mouse drag
 		self._btnDrag		= None	# (widget, 2|3) of a middle/right button drag
 		self._menuGrab		= False	# a mouse press started inside a menu
+		self._closePressed	= None	# window whose close button ✕ is pressed
+		self._switchPressed	= None	# window switch button pressed (-1, 1, 0)
+		self._switchMenu	= None	# list of the windows of the ▾ button
 		self._focusLost		= False	# focused widget was destroyed
 		self._quit		= False
 		self._dirty		= True
@@ -99,7 +102,7 @@ class Tk(Wm, Frame):
 		self._optionDb		= {}	# option_add() database: pattern -> value
 		self._optionCache	= {}
 		self._eventQueue	= []	# queued virtual events (widget, name, evt)
-		self._toplevels		= []	# Toplevel windows in stacking order
+		self._stack		= [self]	# root and Toplevels in stacking order
 		self._grab		= None	# widget holding the grab
 		self._mouseXY		= (0, 0)
 		self._hover		= None	# widget under the pointer (Enter/Leave)
@@ -128,6 +131,13 @@ class Tk(Wm, Frame):
 	# Configuration (menu=…)
 	# ------------------------------------------------------------------
 
+	def __getattr__(self, attr):
+		"""Like tkinter: the root delegates unknown attributes to its
+		interpreter (root.globalgetvar('tk_patchLevel'))"""
+		if attr.startswith('_'):
+			raise AttributeError(attr)
+		return getattr(self.tk, attr)
+
 	def configure(self, cnf=None, **kwargs):
 		if isinstance(cnf, str) or not (cnf or kwargs):
 			return super().configure(cnf)
@@ -152,6 +162,21 @@ class Tk(Wm, Frame):
 	def _menuBar(self):
 		owner = self._barOwner()
 		return owner._ownMenuBar if owner is not None else None
+
+	@property
+	def _toplevels(self):
+		"""Toplevel windows in stacking order (the root left out)."""
+		return [w for w in self._stack if w is not self]
+
+	def lift(self, aboveThis=None):
+		self._raiseWindow(self)
+
+	tkraise = wm_lift = lift
+
+	def lower(self, belowThis=None):
+		self._lowerWindow(self)
+
+	wm_lower = lower
 
 	def _isMaximised(self) -> bool:
 		return True
@@ -323,7 +348,7 @@ class Tk(Wm, Frame):
 		self._dispatchStructure('<Destroy>')
 		for child in list(self._children):
 			child.destroy()
-		self._toplevels.clear()
+		self._stack = [self]
 		self._focusWidget = None
 		self._destroyed   = True
 		import tktext._dialog as _dlg
@@ -558,7 +583,11 @@ class Tk(Wm, Frame):
 				d._dismiss(None)
 			return
 		self._closeMenus()
-		win = self._activeWindow() or self
+		self._closeWindow(self._activeWindow() or self)
+
+	def _closeWindow(self, win) -> None:
+		"""Close *win* like the window manager: its WM_DELETE_WINDOW
+		handler, else destroy it (the root quits the main loop)"""
 		handler = win._protocols.get('WM_DELETE_WINDOW')
 		try:
 			if callable(handler):
@@ -569,6 +598,148 @@ class Tk(Wm, Frame):
 				win.destroy()
 		except Exception:
 			self._reportException()
+
+	def _closeButtonAt(self, mx, my):
+		"""The window whose close button ✕ is at (mx, my), if it may be
+		closed now (no grab, or it is the grab window)"""
+		owner = self._barOwner()
+		if owner is not None and my == 0 and \
+				self._width - CLOSE_WIDTH <= mx < self._width:
+			win = owner
+		else:
+			win = self._windowAt(mx, my)
+			if win is None or win._isMaximised() or not win._decoration()[1] or \
+					(mx, my) != win._closeCell():
+				return None
+		grab = self._grabWindow()
+		if grab is not None and grab.winfo_toplevel() is not win:
+			return None
+		return win
+
+	def _onCloseButton(self, mx, my, bstate) -> bool:
+		"""Mouse on a close button: act on the release like a Button"""
+		down    = bstate & B1_PRESS and not bstate & MOTION
+		up      = bstate & (B1_RELEASE | B1_CLICK)
+		win     = self._closeButtonAt(mx, my)
+		pressed = self._closePressed
+		if down:
+			self._closePressed = win
+			return win is not None
+		if not up:
+			return False
+		self._closePressed = None
+		if win is None or (bstate & B1_RELEASE and pressed is not win):
+			return pressed is not None
+		self._closeMenus()
+		self._closeWindow(win)
+		return True
+
+	# ------------------------------------------------------------------
+	# Window switch (◀ ▶ ▾ on the title bar, Ctrl-F6)
+	# ------------------------------------------------------------------
+
+	def _switchableWindows(self):
+		"""Maximised windows the user can switch to (iconified ones
+		included, withdrawn ones not), in stacking order."""
+		return [w for w in self._stack if not w._destroyed and w._isMaximised()
+			and w._wmState in ('normal', 'iconic')]
+
+	def _switchAllowed(self) -> bool:
+		"""A grab or a modal dialog keeps the windows where they are."""
+		return not self._postedDialogs and self._grabWindow() is None
+
+	def _switchX(self):
+		"""Column of the ◀ button on the title row, or None when the
+		switch buttons are not shown (a single window, or no room left of
+		the menubar)"""
+		x = self._width - CLOSE_WIDTH - SWITCH_WIDTH
+		if x < 0 or len(self._switchableWindows()) < 2:
+			return None
+		self._computeMenuBarPos()
+		if self._menuBarPos and self._menuBarPos[-1][1] > x:
+			return None
+		return x
+
+	def _switchButtonAt(self, mx, my):
+		"""-1 (◀), 1 (▶), 0 (▾) for the switch button at (mx, my), else None"""
+		if my != 0 or self._barOwner() is None:
+			return None
+		x = self._switchX()
+		if x is None:
+			return None
+		for i, label in enumerate(SWITCH_LABELS):
+			if x <= mx < x + len(label):
+				return (-1, 1, 0)[i]
+			x += len(label)
+		return None
+
+	def _onSwitchButton(self, mx, my, bstate) -> bool:
+		"""Mouse on a window switch button: act on the release"""
+		down    = bstate & B1_PRESS and not bstate & MOTION
+		up      = bstate & (B1_RELEASE | B1_CLICK)
+		button  = self._switchButtonAt(mx, my)
+		pressed = self._switchPressed
+		if down:
+			self._switchPressed = button
+			return button is not None
+		if not up:
+			return False
+		self._switchPressed = None
+		if button is None or (bstate & B1_RELEASE and pressed != button):
+			return pressed is not None
+		if not self._switchAllowed():
+			self.bell()
+			return True
+		self._closeMenus()
+		if button:
+			self._cycleWindow(button)
+		else:
+			self._postWindowList()
+		return True
+
+	def _cycleWindow(self, step) -> None:
+		"""Show the next (step 1) or previous (-1) maximised window: the
+		top one goes to the bottom of the stack, or the bottom one to the
+		top, so repeated steps visit all of them in turn."""
+		if not self._switchAllowed():
+			return
+		wins = [w for w in self._windows() if w._isMaximised()]
+		if len(wins) < 2:
+			return
+		self._closeMenus()
+		if step > 0:
+			self._lowerWindow(wins[-1])
+		else:
+			self._raiseWindow(wins[0])
+		self._focusInto(self._activeWindow())
+
+	def _selectWindow(self, win) -> None:
+		"""Bring *win* to the front (deiconified) with the keyboard."""
+		if win._destroyed or not self._switchAllowed():
+			return
+		if win._wmState == 'iconic':
+			win.deiconify()
+		self._raiseWindow(win)
+		self._focusInto(self._activeWindow())
+		self._dirty = True
+
+	def _postWindowList(self):
+		"""Drop down the list of the windows below the ▾ button."""
+		from ._menu import Menu
+		menu = self._switchMenu
+		if menu is None:
+			# internal: kept out of the application's winfo_children()
+			menu = self._switchMenu = Menu(self, tearoff=0)
+			self._children.remove(menu)
+		menu.delete(0, 'end')
+		front = self._barOwner()
+		for w in reversed(self._switchableWindows()):
+			label = ('• ' if w is front else '  ') + str(w._title)
+			if w._wmState == 'iconic':
+				label += ' (iconified)'
+			menu.add_command(label=label, command=lambda w=w: self._selectWindow(w))
+		x = self._switchX() or 0
+		menu._post(x + len(SWITCH_LABELS[0]) + len(SWITCH_LABELS[1]), 1)
 
 	def _handleInput(self, key):
 		"""Dispatch one raw curses key code (including KEY_MOUSE/KEY_RESIZE)."""
@@ -666,9 +837,7 @@ class Tk(Wm, Frame):
 
 	def _windows(self):
 		"""Viewable windows (root and Toplevels), bottom to top."""
-		wins = [self] if self._viewable() else []
-		wins.extend(t for t in self._toplevels if t._viewable())
-		return wins
+		return [w for w in self._stack if w._viewable()]
 
 	def _grabWindow(self):
 		g = self._grab
@@ -706,13 +875,21 @@ class Tk(Wm, Frame):
 	def _raiseWindow(self, win):
 		"""Raise *win* to the top; its transient windows stay above it
 		(like a window manager keeps dialogs above their master)."""
-		if win is self or win not in self._toplevels:
+		if win not in self._stack:
 			return
 		order = [win] + self._transientsOf(win)
-		rest  = [t for t in self._toplevels if t not in order]
-		if rest + order != self._toplevels:
-			self._toplevels = rest + order
-			self._dirty     = True
+		rest  = [t for t in self._stack if t not in order]
+		if rest + order != self._stack:
+			self._stack = rest + order
+			self._dirty = True
+
+	def _lowerWindow(self, win):
+		"""Lower *win* with its transient windows to the bottom."""
+		if win not in self._stack:
+			return
+		order = [win] + self._transientsOf(win)
+		self._stack = order + [t for t in self._stack if t not in order]
+		self._dirty = True
 
 	def _transientsOf(self, win):
 		"""Toplevels transient for *win* (recursively), in stacking order."""
@@ -937,6 +1114,17 @@ class Tk(Wm, Frame):
 			self._openMenuBar(0)
 			return
 
+		# Alt-F4 belongs to the window manager: the application never sees it
+		if isAltF4(key):
+			self._closeWindow(self._activeWindow() or self)
+			return
+
+		# Ctrl-F6 / Ctrl-Shift-F6: the window manager's window switch
+		step = ctrlF6Step(key)
+		if step:
+			self._cycleWindow(step)
+			return
+
 		fw  = self._focusWidget or self._activeWindow() or self
 		evt = _newKeyEvent(fw, key)
 		pat = evt.patterns()
@@ -1024,6 +1212,11 @@ class Tk(Wm, Frame):
 		# Modal dialogs grab the mouse
 		if self._postedDialogs:
 			self._postedDialogs[-1]._handleMouse(mx, my, bstate)
+			return
+
+		# close buttons of the windows (the window manager's)
+		if not isWheel(bstate) and (self._onCloseButton(mx, my, bstate) or
+				self._onSwitchButton(mx, my, bstate)):
 			return
 
 		# Menubar on the title row
@@ -1377,12 +1570,12 @@ class Tk(Wm, Frame):
 		_fillRect(scr, 0, 0, self._height, self._width, attr=attr)
 		self._raster.beginFrame(sum(1 for w in self._rasterWidgets if w._isMapped()))
 
-		if self._viewable():
-			self._drawTitleBar(scr, self)
-			self._renderChildren(scr)
-		for top in list(self._toplevels):
-			if top._isMapped():
-				top.render(scr)
+		for win in self._windows():
+			if win is self:
+				self._drawTitleBar(scr, self)
+				self._renderChildren(scr)
+			elif win._isMapped():
+				win.render(scr)
 
 		self._drawFocusMark(scr)
 
@@ -1473,6 +1666,15 @@ class Tk(Wm, Frame):
 			return
 		barAttr = self._colors.roleAttr('titlebar')
 		_addStr(scr, 0, 0, ' ' * self._width, barAttr)
+		width  = max(0, self._width - CLOSE_WIDTH)
+		_addStr(scr, 0, width, CLOSE_LABEL, self._colors.roleAttr('titlebar.close'))
+		x = self._switchX()
+		if x is not None:
+			width = x
+			attr  = self._colors.roleAttr('titlebar.button')
+			for label in SWITCH_LABELS:
+				_addStr(scr, 0, x, label, attr)
+				x += len(label)
 		title  = f' {owner._title} '
 		startX = 0
 		if self._menuBar is not None:
@@ -1488,11 +1690,11 @@ class Tk(Wm, Frame):
 					a = self._colors.roleAttr('menubar.active')
 				_addStr(scr, 0, x0, label, a)
 				startX = x1
-			titleX = max(startX + 1, self._width - len(title))
+			titleX = max(startX + 1, width - len(title))
 		else:
-			titleX = max(0, (self._width - len(title)) // 2)
-		if titleX < self._width:
-			_addStr(scr, 0, titleX, _pad(title, min(len(title), self._width - titleX)),
+			titleX = max(0, (width - len(title)) // 2)
+		if titleX < width:
+			_addStr(scr, 0, titleX, _pad(title, min(len(title), width - titleX)),
 				self._colors.roleAttr('titlebar.title'))
 		if not self._postedMenus:
 			self._menuBarActive = -1
